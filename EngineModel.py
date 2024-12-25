@@ -12,9 +12,19 @@ vi = 200  # Induced velocity through the disk (m/s)
 ηTotal = ηmotor * ηprop * ηdisk  # Total efficiency
 v2 = v1 + 2 * vi  # Velocity far downstream
 
-# ===============================
-# Chapter 1: Most Basic Actuator Disk Model
-# ===============================
+#---------------------------------------# 
+# Section 1 - Basic Actuator Disk Model #
+# Energy demand to drive the propulsive fuselage engine
+""" 
+Inlet size
+Generated thrust
+Efficiency
+    -As a function of heat
+    -As a function of inlet freestream velocity
+Exhaust size
+Fuel burn rate
+"""
+#---------------------------------------# 
 
 class ActuatorDiskModel:
     def __init__(self, p, A, v1, vi, ηdisk, ηmotor, ηprop):
@@ -40,51 +50,70 @@ class ActuatorDiskModel:
         """Calculate the power required at the disk (P_disk)."""
         return T * (self.v1 + self.vi)
 
+    def calculate_total_power(self, P_disk):
+        """Calculate the total electrical power required (P_total)."""
+        return P_disk / self.ηTotal
+
     def display_results(self):
         """All calculations and the results."""
         mdot = self.calculate_mass_flow_rate()
         T = self.calculate_thrust(mdot)
         P_disk = self.calculate_power_disk(T)
-
+        P_total = self.calculate_total_power(P_disk)
+        
         print("Mass flow rate (mdot):", mdot, "kg/s")
         print("Thrust (T):", T, "N")
         print("Power required at the disk (P_disk):", P_disk, "W")
         print("Total efficiency (ηTotal):", self.ηTotal)
-        return mdot, T, P_disk
-
-
-# ===============================
-# Chapter 2: Derived Values from the Basic Model
-# ===============================
-
-class DerivedValues:
-    def __init__(self, mdot, T, P_disk, ηTotal):
-        self.mdot = mdot
-        self.ηTotal = ηTotal
-        self.T = T
-        self.P_disk = P_disk
-
-    def calculate_total_power(self):
-        """Calculate the total electrical power required (P_total)."""
-        return self.P_disk / self.ηTotal
-
-    def display_results(self):
-        """Display all calculations and the results."""
-        P_total = self.calculate_total_power()
         print("Total electrical power required (P_total):", P_total, "W")
-        return
 
-
-# ===============================
-# Chapter 2: Derived Values from the Basic Model
-# =============================== 
-
-
+        return mdot, T, P_disk, P_total
 
 print('---------Chapter 1: Basic Actuator Disk Model------------------------')
 BasicModelValues = ActuatorDiskModel(p, A, v1, vi, ηdisk, ηmotor, ηprop)
-mdot, T, P_disk = BasicModelValues.display_results()  
+mdot, T, P_disk, P_total = BasicModelValues.display_results()
+print('---------------------------------------------------------------------')
 print('---------Chapter 2: Derived Values------------------------')
-Values = DerivedValues(mdot, T, P_disk, BasicModelValues.ηTotal)
-Values.display_results()
- 
+
+
+#---------------------------------------# 
+# Section 1 - Basic Actuator Disk Model # 
+#---------------------------------------# 
+
+
+#--------------------------------------------------# 
+# Section 2 - Visualization of Actuator Disk Model # 
+#--------------------------------------------------# 
+
+x = np.linspace(-2, 2, 100)
+y = np.linspace(-1, 1, 50)
+X, Y = np.meshgrid(x, y)
+
+V_before = v1 * np.ones_like(X)
+V_disk = vi * np.exp(-X**2 * 5)  
+V_after = BasicModelValues.v2 * np.exp(-(X-1)**2 * 5)  
+
+V_field = V_before * (X < -0.5) + V_disk * ((X >= -0.5) & (X <= 0.5)) + V_after * (X > 0.5)
+
+plt.figure(figsize=(12, 6))
+plt.contourf(X, Y, V_field, levels=50, cmap='coolwarm')
+plt.colorbar(label="Velocity (m/s)")
+
+plt.plot([0, 0], [-1, 1], color='black', linewidth=2, label="Actuator Disk")
+
+# streamlines to indicate flow direction
+U_flow = V_field  # X-velocity components
+V_flow = np.zeros_like(U_flow)  # No Y-direction flow
+plt.streamplot(X, Y, U_flow, V_flow, color="white", linewidth=0.5, density=2)
+
+plt.title("Flow Visualization - Actuator Disk Model")
+plt.xlabel("Distance (arbitrary units)")
+plt.ylabel("Height (arbitrary units)")
+plt.legend()
+plt.grid(False)
+plt.show()
+
+#--------------------------------------------------# 
+# Section 2 - Visualization of Actuator Disk Model # 
+#--------------------------------------------------# 
+
