@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 
 A = 2.3  # Disk area (m^2)
 v1 = 231  # Free-stream velocity - Cruise speed of the A320 (m/s)
@@ -177,6 +179,26 @@ print('---------------------------------------------------------------------')
 # Section 4 - Visualization of Actuator Disk Model #
 #--------------------------------------------------# 
  
+#--------------------------------------------------# 
+# Section 4 - Visualization of Actuator Disk Model #
+#--------------------------------------------------# 
+ 
+#--------------------------------------------------# 
+# Section 4 - Visualization of Actuator Disk Model #
+#--------------------------------------------------# 
+ 
+#--------------------------------------------------# 
+# Section 4 - Visualization of Actuator Disk Model #
+#--------------------------------------------------# 
+
+#--------------------------------------------------# 
+# Section 4 - Visualization of Actuator Disk Model #
+#--------------------------------------------------# 
+
+#--------------------------------------------------# 
+# Section 4 - Visualization of Actuator Disk Model #
+#--------------------------------------------------# 
+
 # Parameters for the detailed electric engine nacelle geometry
 length = 8  # Total length of the nacelle (arbitrary units)
 extra_length = 2  # Additional length for visualizing velocity before and after nacelle
@@ -186,7 +208,6 @@ l_exhaust = length - (l_intake + l_engine)  # Length of the exhaust section
 intake_radius = 1.2  # Radius of the intake section
 engine_radius = 1.5  # Maximum radius at the engine section
 exhaust_radius = 1.0  # Radius at the exhaust section
-lip_thickness = 0.1  # Thickness of the intake lip
 
 # Discretize the length of the nacelle including extra sections
 x = np.linspace(-extra_length, length + extra_length, 700)
@@ -210,59 +231,90 @@ outer_radius = np.piecewise(
     ]
 )
 
-# Generate regions with different velocity conditions
+# Adjusted velocity profile with described behavior
 velocities = np.piecewise(
     x,
     [
-        x < 0,                              # Before intake
-        (x >= 0) & (x < l_intake),          # Intake region
-        (x >= l_intake) & (x < l_intake + l_engine),  # Engine region
-        (x >= l_intake + l_engine) & (x <= length),   # Exhaust region
-        x > length                          # After exhaust
+        x < 0,  # Before intake
+        (x >= 0) & (x < l_intake),  # Intake region
+        (x >= l_intake) & (x < l_intake + l_engine / 2),  # Before the fan
+        (x >= l_intake + l_engine / 2) & (x < l_intake + l_engine),  # After the fan
+        (x >= l_intake + l_engine) & (x <= length),  # Exhaust region
+        x > length  # After exhaust
     ],
     [
-        lambda x: v1,  # Free-stream velocity before intake
-        lambda x: v1,  # Free-stream velocity in intake region
-        lambda x: vi,  # Induced velocity in engine section
-        lambda x: v2,  # Velocity far downstream in exhaust region
-        lambda x: v2   # Far downstream velocity after exhaust
+        lambda x: v1,  # Free-stream velocity
+        lambda x: v1 - 10,  # Slightly reduced velocity at the intake
+        lambda x: vi - 20,  # Reduced velocity near the fan
+        lambda x: vi + 10,  # Increased velocity just after the fan
+        lambda x: v2 + 20,  # Increased velocity in the exhaust region
+        lambda x: v2 - (x - length) * (v2 - v1) / extra_length,  # Gradual decrease to v1
     ]
 )
+
+# Define distinct colors for each velocity region
+region_colors = {
+    "Free-stream": "blue",
+    "Intake": "cyan",
+    "Before Fan": "green",
+    "After Fan": "yellow",
+    "Exhaust": "orange",
+    "Far Downstream": "red"
+}
 
 # Mirror the geometry for visualization
 x_full = np.concatenate([x, x[::-1]])
 y_outer = np.concatenate([outer_radius, -outer_radius[::-1]])
 
-# Plot the detailed nacelle geometry with velocity regions
+# Map velocities to a colormap for the scale
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+
+cmap = plt.cm.plasma  # Use a vibrant colormap for velocity scale
+norm = Normalize(vmin=min(velocities), vmax=max(velocities))
+sm = ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
+
+# Fan positioned at the midpoint of the engine section
+fan_x = [l_intake + l_engine / 2, l_intake + l_engine / 2]
+fan_y = [-engine_radius, engine_radius]
+
+# Plot the updated nacelle geometry with the distinct velocity regions
 plt.figure(figsize=(12, 6))
 plt.plot(x_full, y_outer, color="darkred", linewidth=2, label="Outer Surface (Free-stream Border)")
-plt.fill_between(x, -outer_radius, outer_radius, where=(x < 0), color="lightgray", alpha=0.5, label="Free-stream (v1)")
-plt.fill_between(x, -outer_radius, outer_radius, where=((x >= 0) & (x < l_intake)), color="lightblue", alpha=0.5, label="Intake Region (v1)")
-plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake) & (x < l_intake + l_engine)), color="lightgreen", alpha=0.5, label="Engine Region (vi)")
-plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake + l_engine) & (x <= length)), color="orange", alpha=0.5, label="Exhaust Region (v2)")
-plt.fill_between(x, -outer_radius, outer_radius, where=(x > length), color="lightgray", alpha=0.5)
+plt.fill_between(x, -outer_radius, outer_radius, where=(x < 0), color=region_colors["Free-stream"], alpha=0.7, label="Free-stream (v1)")
+plt.fill_between(x, -outer_radius, outer_radius, where=((x >= 0) & (x < l_intake)), color=region_colors["Intake"], alpha=0.7, label="Intake Region")
+plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake) & (x < l_intake + l_engine / 2)), color=region_colors["Before Fan"], alpha=0.7, label="Before Fan (Reduced Velocity)")
+plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake + l_engine / 2) & (x < l_intake + l_engine)), color=region_colors["After Fan"], alpha=0.7, label="After Fan (Increased Velocity)")
+plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake + l_engine) & (x <= length)), color=region_colors["Exhaust"], alpha=0.7, label="Exhaust Region (Increased Velocity)")
+plt.fill_between(x, -outer_radius, outer_radius, where=(x > length), color=region_colors["Far Downstream"], alpha=0.7, label="Far Downstream")
 
-# Add a straight line for the fan in the engine section
-fan_x = [l_intake, l_intake]
-fan_y = [-engine_radius, engine_radius]
+# Fan visualization
 plt.plot(fan_x, fan_y, color="black", linewidth=2, label="Fan")
 
 # Annotations
-plt.text(-1.5, intake_radius + 0.2, "Free-stream", fontsize=10)
-plt.text(0.5, intake_radius + 0.2, "Intake", fontsize=10)
-plt.text(l_intake + 1, engine_radius + 0.2, "Engine Section", fontsize=10)
-plt.text(length - 1.5, exhaust_radius + 0.2, "Exhaust", fontsize=10)
-plt.text(length + 0.5, exhaust_radius + 0.2, "Far Downstream", fontsize=10)
+plt.text(-1.5, intake_radius + 0.2, "Free-stream", fontsize=10, color=region_colors["Free-stream"])
+plt.text(0.5, intake_radius + 0.2, "Intake", fontsize=10, color=region_colors["Intake"])
+plt.text(l_intake + 0.5, engine_radius + 0.2, "Before Fan", fontsize=10, color=region_colors["Before Fan"])
+plt.text(l_intake + l_engine / 2 + 0.5, engine_radius + 0.2, "After Fan", fontsize=10, color=region_colors["After Fan"])
+plt.text(length - 1.5, exhaust_radius + 0.2, "Exhaust", fontsize=10, color=region_colors["Exhaust"])
+plt.text(length + 0.5, exhaust_radius + 0.2, "Far Downstream", fontsize=10, color=region_colors["Far Downstream"])
 
 # Styling
 plt.axhline(0, color="black", linewidth=0.5, linestyle="--")
-plt.title("Detailed 2D Electric Engine Nacelle Geometry with Extended Velocity Regions", fontsize=14)
+plt.title("Updated 2D Electric Engine Nacelle Geometry with Velocity Scale", fontsize=14)
 plt.xlabel("Length (arbitrary units)", fontsize=12)
 plt.ylabel("Radius (arbitrary units)", fontsize=12)
 plt.grid(True)
 plt.axis("equal")
+
+# Add the color bar for velocity scale
+cbar = plt.colorbar(sm, ax=plt.gca(), orientation='vertical', shrink=0.8)
+cbar.set_label('Velocity (m/s)', fontsize=12)
+
 plt.legend()
 plt.show()
 
 
 print('---------End of Actuator Disk and Drag Analysis------------------------')
+ 
