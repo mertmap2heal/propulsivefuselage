@@ -1,105 +1,162 @@
+import tkinter as tk
+from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import math
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 
-A = 2.3  # Disk area (m^2)
-v1 = 231  # Free-stream velocity - Cruise speed of the A320 (m/s)
-vi = 200  # Induced velocity through the disk (m/s)
-ηdisk = 0.95  # Disk efficiency
-ηmotor = 0.95  # Motor efficiency
-ηprop = 0.97  # Propeller efficiency
-ηTotal = ηmotor * ηprop * ηdisk  # Total efficiency
-v2 = v1 + 2 * vi  # Velocity far downstream
+#---------------------------------------# 
+# Section 1 - Flight Conditions #
+#---------------------------------------# 
 
-def calculate_atmospheric_properties(FL):
-    # Constants
-    g_s = 9.80665  # m/s^2
-    R = 287.05  # J/(kg*K)
+class FlightConditions:
+    def calculate_atmospheric_properties(self, FL):
+        # Constants
+        g_s = 9.80665  # m/s^2
+        R = 287.05  # J/(kg*K)
 
-    # Reference values
-    T_MSL = 288.15  # K
-    p_MSL = 101325  # Pa
-    rho_MSL = 1.225  # kg/m^3
+        # Reference values
+        T_MSL = 288.15  # K
+        p_MSL = 101325  # Pa
+        rho_MSL = 1.225  # kg/m^3
 
-    H_MSL = 0  # m
-    H_G11 = 11000  # m
-    H_G20 = 20000  # m
+        H_G11 = 11000  # m
+        H_G20 = 20000  # m
 
-    T_11 = 216.65  # K
-    p_11 = 22632  # Pa
-    rho_11 = 0.364  # kg/m^3
+        T_11 = 216.65  # K
+        p_11 = 22632  # Pa
+        rho_11 = 0.364  # kg/m^3
 
-    T_20 = 216.65  # K
-    p_20 = 5474.88  # Pa
-    rho_20 = 0.088  # kg/m^3
+        T_20 = 216.65  # K
+        p_20 = 5474.88  # Pa
+        rho_20 = 0.088  # kg/m^3
 
-    gamma_Tropo = -0.0065  # K/m
-    gamma_LowerStr = 0.0  # K/m (Lower stratosphere is isothermal)
-    gamma_UpperStr = 0.001  # K/m (Upper stratosphere lapse rate)
+        gamma_Tropo = -0.0065  # K/m
+        gamma_UpperStr = 0.001  # K/m (Upper stratosphere lapse rate)
 
-    n_tropo = 1 / (1 + gamma_Tropo * R / g_s)
-    n_lower = 1  # Isothermal layer
-    n_upper = 1 / (1 + gamma_UpperStr * R / g_s)
+        # Convert FL to height (in meters)
+        H_G = FL * 100
 
-    # Convert FL to height (in meters)
-    H_G = FL * 100
+        if H_G <= H_G11:  # Troposphere
+            T = T_MSL + gamma_Tropo * H_G
+            p = p_MSL * (T / T_MSL) ** (-g_s / (gamma_Tropo * R))
+            rho = rho_MSL * (T / T_MSL) ** (-g_s / (gamma_Tropo * R) - 1)
 
-    if H_G <= H_G11:  # Troposphere
-        T = T_MSL * (1 - ((n_tropo - 1) / n_tropo) * (g_s / (R * T_MSL)) * H_G)
-        p = p_MSL * (1 - ((n_tropo - 1) / n_tropo) * (g_s / (R * T_MSL)) * H_G) ** (n_tropo / (n_tropo - 1))
-        rho = rho_MSL * (1 - ((n_tropo - 1) / n_tropo) * (g_s / (R * T_MSL)) * H_G) ** (1 / (n_tropo - 1))
+        elif H_G <= H_G20:  # Lower Stratosphere
+            T = T_11
+            p = p_11 * math.exp(-g_s / (R * T_11) * (H_G - H_G11))
+            rho = rho_11 * math.exp(-g_s / (R * T_11) * (H_G - H_G11))
 
-    elif H_G <= H_G20:  # Lower Stratosphere 
-        T = T_11
-        p = p_11 * math.exp(-g_s / (R * T_11) * (H_G - H_G11))
-        rho = rho_11 * math.exp(-g_s / (R * T_11) * (H_G - H_G11))
+        else:  # Upper Stratosphere
+            T = T_20 + gamma_UpperStr * (H_G - H_G20)
+            p = p_20 * (T / T_20) ** (-g_s / (gamma_UpperStr * R))
+            rho = rho_20 * (T / T_20) ** (-(g_s / (gamma_UpperStr * R) + 1))
 
-    else:  # Upper Stratosphere
-        T = T_20 * (1 - ((n_upper - 1) / n_upper) * (g_s / (R * T_20)) * (H_G - H_G20))
-        p = p_20 * (1 - ((n_upper - 1) / n_upper) * (g_s / (R * T_20)) * (H_G - H_G20)) ** (n_upper / (n_upper - 1))
-        rho = rho_20 * (1 - ((n_upper - 1) / n_upper) * (g_s / (R * T_20)) * (H_G - H_G20)) ** (1 / (n_upper - 1))
+        return T, p, rho
 
-    return T, p, rho
+    def calculate_free_stream_velocity(self, Mach, FL):
+        kappa = 1.4  # Ratio of specific heats for air, constant
+        R = 287.05  # J/(kg*K)
+        
+        # Temperature property from the previous method
+        T, _, _ = self.calculate_atmospheric_properties(FL)
+        # Speed of sound
+        a = math.sqrt(kappa * R * T)
+        
+        # Free-stream velocity
+        v_freestream = Mach * a
+        v_inlet = v_freestream
+        return v_inlet, v_freestream
 
 
-FL = float(input("Enter Flight Level (FL): "))  # e.g., FL350 for 35000 feet
-T, p, rho = calculate_atmospheric_properties(FL)
-print('---------Chapter 1: Flight Conditions------------------------')
+FL = float(input("Enter Flight Level (FL): "))  
+Mach = float(input("Enter Mach Number: "))  
+
+flight_conditions = FlightConditions()
+T, p, rho = flight_conditions.calculate_atmospheric_properties(FL)
+v_inlet, v_freestream = flight_conditions.calculate_free_stream_velocity(Mach, FL)
+ 
+
+print('---------Chapter 1: Flight Conditions-----------------------------------')
 print(f"Temperature: {T:.2f} K")
 print(f"Pressure: {p:.2f} Pa")
-print(f"Density: {rho:.6f} kg/m^3")
-
+print(f"Density: {rho:.6f} kg/m³")
+print(f'Free-stream velocity: {v_freestream:.2f} m/s')
+print('------------------------------------------------------------------------')
 
 #---------------------------------------# 
-# Section 1 - Basic Actuator Disk Model #
-# Energy demand to drive the propulsive fuselage engine
+# Section 2 - Nacelle Geometry #
+#---------------------------------------# 
+class NacelleParameters:
+    def __init__(self):
+        self.A_inlet = 2  # Engine Inlet Area (m^2)
+        self.v_inlet = 230  # Free-stream velocity - Av. Cruise speed of the A320 (m/s)
+        self.ηdisk = 0.95  # Disk efficiency
+        self.ηmotor = 0.95  # Motor efficiency
+        self.ηprop = 0.97  # Propeller efficiency
+        self.ηTotal = self.ηmotor * self.ηprop * self.ηdisk  # Total efficiency
+        self.nac_length = 2.286  # Nacelle length (m), from engine spec
+        
+    def variable_parameters(self, v_inlet, A_inlet):
+
+        A_disk = self.A_inlet / 0.9
+        Inlet_radius = math.sqrt(self.A_inlet / math.pi)
+        Disk_radius = math.sqrt(A_disk / math.pi)
+        v_disk = (self.A_inlet * self.v_inlet) / A_disk
+
+        v_exhaust = self.v_inlet + 2 * v_disk  # Comes from actuator disk theory
+        A_exhaust = A_disk * (v_disk / v_exhaust)
+        Exhaust_radius = math.sqrt(A_exhaust / math.pi)
+
+        print('---------Chapter 2: Nacelle Geometry -----------------------------------')
+       
+        print('Inlet Radius:', Inlet_radius, 'm')
+        print('Inlet Area:', A_inlet, 'm^2')
+        print('Inlet Velocity:', v_inlet, 'm/s')
+
+        print('Disk Radius:', Disk_radius, 'm')
+        print('Disk Area:', A_disk, 'm^2')
+        print('Disk Velocity:', v_disk, 'm/s')
+
+        print('Exhaust Radius:', Exhaust_radius, 'm')
+        print('Exhaust Area:', A_exhaust, 'm^2')
+        print('Exhaust Velocity:', v_exhaust, 'm/s')
+        print('-------------------------------------------------------------------------')
+    
+        return self.A_inlet, A_disk, A_exhaust, Inlet_radius, Exhaust_radius, v_disk, v_exhaust, self.v_inlet, Disk_radius
+
+nacelle = NacelleParameters()  
+A_inlet = nacelle.A_inlet
+
+#---------------------------------------# 
+# Section 3 - Basic Actuator Disk Model #
 #---------------------------------------# 
 
 class ActuatorDiskModel:
-    def __init__(self, rho, A, v1, vi, ηdisk, ηmotor, ηprop):
+    def __init__(self, rho, A_disk, v_inlet, v_disk, ηdisk, ηmotor, ηprop):
         self.rho = rho
-        self.A = A
-        self.v1 = v1
-        self.vi = vi
+        self.A_disk= A_disk
+        self.v_inlet = v_inlet
+        self.v_disk = v_disk
         self.ηdisk = ηdisk
         self.ηmotor = ηmotor
         self.ηprop = ηprop
         self.ηTotal = ηmotor * ηprop * ηdisk
-        self.v2 = v1 + 2 * vi
+        self.v_exhaust = v_inlet + 2 * v_disk
 
     def calculate_mass_flow_rate(self):
         """Calculate the mass flow rate (mdot)."""
-        return self.rho * self.A * self.vi
+        return self.rho * self.A_disk* self.v_disk
 
     def calculate_thrust(self, mdot):
         """Calculate the thrust (T)."""
-        return mdot * (self.v2 - self.v1)
+        return mdot * (self.v_exhaust - self.v_inlet)
 
     def calculate_power_disk(self, T):
         """Calculate the power required at the disk (P_disk)."""
-        return T * (self.v1 + self.vi)
+        return T * (self.v_inlet + self.v_disk)
 
     def calculate_total_power(self, P_disk):
         """Calculate the total electrical power required (P_total)."""
@@ -118,34 +175,51 @@ class ActuatorDiskModel:
         print("Total efficiency (ηTotal):", self.ηTotal)
         print("Total electrical power required (P_total):", P_total, "W")
 
-        return mdot, T, P_disk, P_total
+        return mdot, T, P_disk, P_total, self.A_disk
 
-print('---------Chapter 2: Basic Actuator Disk Model------------------------')
-BasicModelValues = ActuatorDiskModel(rho, A, v1, vi, ηdisk, ηmotor, ηprop)
-mdot, T, P_disk, P_total = BasicModelValues.display_results()
+
+# From Chapter 1: FlightConditions
+rho = flight_conditions.calculate_atmospheric_properties(FL)[2]   
+v_inlet = v_inlet  
+
+# From Chapter 2: NacelleParameters
+A_inlet = nacelle.A_inlet  
+results_nacelle = nacelle.variable_parameters(v_inlet, A_inlet)  
+A_disk = results_nacelle[1]   
+v_disk = results_nacelle[5]   
+ηdisk = nacelle.ηdisk   
+ηmotor = nacelle.ηmotor  
+ηprop = nacelle.ηprop  
+ 
+print('---------Chapter 3: Basic Actuator Disk Model------------------------')
+BasicModelValues = ActuatorDiskModel(rho, A_disk, v_inlet, v_disk, ηdisk, ηmotor, ηprop)
+
+
+mdot, T, P_disk, P_total, A_disk = BasicModelValues.display_results()
 
 #--------------------------------------------------# 
-# Section 3 - Drag Generation by BLI Engine #
+# Section 4 - Drag Generation by BLI Engine #
 #--------------------------------------------------# 
-print('---------Chapter 3: Drag Generated by BLI Engine------------------------')
 
 class DragbyBLIEngine:
-    def __init__(self, lnac, dnac, T, p, v1):
-        self.lnac = lnac  # Nacelle length (m)
-        self.dnac = dnac  # Nacelle diameter (m)
-        self.T = T        # Temperature (K)
-        self.p = p        # Pressure (Pa)
-        self.v1 = v1      # Free-stream velocity (m/s)
+    def __init__(self, flight_conditions, nacelle_params, FL, Mach):
+        # From FlightConditions Class
+        self.T, self.p, _ = flight_conditions.calculate_atmospheric_properties(FL)  # Temperature and pressure
+        self.v_inlet, _ = flight_conditions.calculate_free_stream_velocity(Mach, FL)  # Free-stream velocity
+
+        # From NacelleParameters Class
+        self.nac_length = nacelle_params.nac_length  # Nacelle length
+        self.A_inlet = nacelle_params.A_inlet  # Inlet area
+        self.inlet_radius = math.sqrt(self.A_inlet / math.pi)  # Nacelle diameter derived from inlet area
         
     def calculate_zero_lift_drag(self):
-        """Calculate zero lift drag based on nacelle properties."""
-        #--------Dynamic Viscosity----------------#
-        mu = (18.27 * 10**-6) * (411.15 / (self.T + 120)) * (self.T / 291.15) ** 1.5  # Sutherland's law
+        # Dynamic Viscosity using Sutherland's law
+        mu = (18.27 * 10**-6) * (411.15 / (self.T + 120)) * (self.T / 291.15) ** 1.5
         k = 10 * 10**-6  # Surface finish coefficient for aluminum
 
-        #--------Reynolds Number------------------#
-        Re = (self.p * self.v1 * self.lnac) / mu
-        Re0 = 38 * (self.lnac / k) ** 1.053  # Cutoff Reynolds number
+        # Reynolds Number
+        Re = (self.p * self.v_inlet * self.nac_length) / mu
+        Re0 = 38 * (self.nac_length / k) ** 1.053  # Cutoff Reynolds number
         if Re > Re0:
             Re = Re0
             print("Reynolds Number exceeded cutoff Reynolds Number.")
@@ -153,168 +227,260 @@ class DragbyBLIEngine:
         # Friction drag coefficient for laminar flow
         Cf = 1.328 / math.sqrt(Re)
 
-        #--------Nacelle Parasite Drag Area-------#
-        f = self.lnac / self.dnac
+        # Nacelle Parasite Drag Area
+        f = self.nac_length / (2 * self.inlet_radius)
         Fnac = 1 + 0.35 / f  # Nacelle parasite drag factor
-        Snacwet = math.pi * self.dnac * self.lnac  # Wetted area of the nacelle
+        Snacwet = math.pi * 2 * self.inlet_radius * self.nac_length  # Wetted area of the nacelle
         fnacparasite = Cf * Fnac * Snacwet  # Nacelle Parasite Drag
 
         # Zero lift drag
-        Dzero = 0.5 * self.p * self.v1**2 * fnacparasite
+        Dzero = 0.5 * self.p * self.v_inlet**2 * fnacparasite
         return Dzero
 
-# Example input values for the drag calculation
-lnac = 2.0  # Length of the nacelle (m)
-dnac = 0.5  # Diameter of the nacelle (m)
+# Initialize the DragbyBLIEngine class
+bli_engine = DragbyBLIEngine(flight_conditions, nacelle, FL, Mach)
 
-BLIEngine = DragbyBLIEngine(lnac, dnac, T, p, v1)
-Dzero = BLIEngine.calculate_zero_lift_drag()
-
+# Calculate zero-lift drag
+Dzero = bli_engine.calculate_zero_lift_drag()
  
+print('---------Chapter 4: Drag Generated by BLI Engine------------------------')
 print(f"Zero Lift Drag (Dzero): {Dzero:.2f} N")
-print('---------------------------------------------------------------------')
+print('------------------------------------------------------------------------')
 
 
 #--------------------------------------------------# 
-# Section 4 - Visualization of Actuator Disk Model #
-#--------------------------------------------------# 
- 
-#--------------------------------------------------# 
-# Section 4 - Visualization of Actuator Disk Model #
-#--------------------------------------------------# 
- 
-#--------------------------------------------------# 
-# Section 4 - Visualization of Actuator Disk Model #
-#--------------------------------------------------# 
- 
-#--------------------------------------------------# 
-# Section 4 - Visualization of Actuator Disk Model #
+# Section 5 - Visualization of the Engine Model #
 #--------------------------------------------------# 
 
-#--------------------------------------------------# 
-# Section 4 - Visualization of Actuator Disk Model #
-#--------------------------------------------------# 
-
-#--------------------------------------------------# 
-# Section 4 - Visualization of Actuator Disk Model #
-#--------------------------------------------------# 
-
-# Parameters for the detailed electric engine nacelle geometry
-length = 8  # Total length of the nacelle (arbitrary units)
-extra_length = 2  # Additional length for visualizing velocity before and after nacelle
-l_intake = 1.5  # Length of the intake section
-l_engine = 2.5  # Length of the engine section
-l_exhaust = length - (l_intake + l_engine)  # Length of the exhaust section
-intake_radius = 1.2  # Radius of the intake section
-engine_radius = 1.5  # Maximum radius at the engine section
-exhaust_radius = 1.0  # Radius at the exhaust section
-
-# Discretize the length of the nacelle including extra sections
-x = np.linspace(-extra_length, length + extra_length, 700)
-
-# Outer surface radius profile for detailed nacelle
-outer_radius = np.piecewise(
-    x,
-    [
-        x < 0,                              # Before intake
-        (x >= 0) & (x < l_intake),          # Intake section
-        (x >= l_intake) & (x < l_intake + l_engine),  # Engine section
-        (x >= l_intake + l_engine) & (x <= length),   # Exhaust section
-        x > length                          # After exhaust
-    ],
-    [
-        lambda x: intake_radius,  # Constant radius before intake
-        lambda x: intake_radius + (engine_radius - intake_radius) / l_intake * x,
-        lambda x: engine_radius,
-        lambda x: engine_radius - (engine_radius - exhaust_radius) / l_exhaust * (x - l_intake - l_engine),
-        lambda x: exhaust_radius  # Constant radius after exhaust
-    ]
-)
-
-# Adjusted velocity profile with described behavior
-velocities = np.piecewise(
-    x,
-    [
-        x < 0,  # Before intake
-        (x >= 0) & (x < l_intake),  # Intake region
-        (x >= l_intake) & (x < l_intake + l_engine / 2),  # Before the fan
-        (x >= l_intake + l_engine / 2) & (x < l_intake + l_engine),  # After the fan
-        (x >= l_intake + l_engine) & (x <= length),  # Exhaust region
-        x > length  # After exhaust
-    ],
-    [
-        lambda x: v1,  # Free-stream velocity
-        lambda x: v1 - 10,  # Slightly reduced velocity at the intake
-        lambda x: vi - 20,  # Reduced velocity near the fan
-        lambda x: vi + 10,  # Increased velocity just after the fan
-        lambda x: v2 + 20,  # Increased velocity in the exhaust region
-        lambda x: v2 - (x - length) * (v2 - v1) / extra_length,  # Gradual decrease to v1
-    ]
-)
-
-# Define distinct colors for each velocity region
-region_colors = {
-    "Free-stream": "blue",
-    "Intake": "cyan",
-    "Before Fan": "green",
-    "After Fan": "yellow",
-    "Exhaust": "orange",
-    "Far Downstream": "red"
-}
-
-# Mirror the geometry for visualization
-x_full = np.concatenate([x, x[::-1]])
-y_outer = np.concatenate([outer_radius, -outer_radius[::-1]])
-
-# Map velocities to a colormap for the scale
+import tkinter as tk
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import math
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 
-cmap = plt.cm.plasma  # Use a vibrant colormap for velocity scale
-norm = Normalize(vmin=min(velocities), vmax=max(velocities))
-sm = ScalarMappable(cmap=cmap, norm=norm)
-sm.set_array([])
 
-# Fan positioned at the midpoint of the engine section
-fan_x = [l_intake + l_engine / 2, l_intake + l_engine / 2]
-fan_y = [-engine_radius, engine_radius]
+class NacelleVisualization:
+    def __init__(self, A_inlet, A_disk, A_exhaust, v_inlet, v_disk, v_exhaust, nac_length, inlet_radius, disk_radius, exhaust_radius):
+        self.A_inlet = A_inlet
+        self.A_disk = A_disk
+        self.A_exhaust = A_exhaust
+        self.v_inlet = v_inlet
+        self.v_disk = v_disk
+        self.v_exhaust = v_exhaust
+        self.nac_length = nac_length
+        self.inlet_radius = inlet_radius
+        self.disk_radius = disk_radius
+        self.exhaust_radius = exhaust_radius
 
-# Plot the updated nacelle geometry with the distinct velocity regions
-plt.figure(figsize=(12, 6))
-plt.plot(x_full, y_outer, color="darkred", linewidth=2, label="Outer Surface (Free-stream Border)")
-plt.fill_between(x, -outer_radius, outer_radius, where=(x < 0), color=region_colors["Free-stream"], alpha=0.7, label="Free-stream (v1)")
-plt.fill_between(x, -outer_radius, outer_radius, where=((x >= 0) & (x < l_intake)), color=region_colors["Intake"], alpha=0.7, label="Intake Region")
-plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake) & (x < l_intake + l_engine / 2)), color=region_colors["Before Fan"], alpha=0.7, label="Before Fan (Reduced Velocity)")
-plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake + l_engine / 2) & (x < l_intake + l_engine)), color=region_colors["After Fan"], alpha=0.7, label="After Fan (Increased Velocity)")
-plt.fill_between(x, -outer_radius, outer_radius, where=((x >= l_intake + l_engine) & (x <= length)), color=region_colors["Exhaust"], alpha=0.7, label="Exhaust Region (Increased Velocity)")
-plt.fill_between(x, -outer_radius, outer_radius, where=(x > length), color=region_colors["Far Downstream"], alpha=0.7, label="Far Downstream")
+        # Geometry lengths
+        self.extra_length = 2
+        self.l_intake = 1.5
+        self.l_engine = 2.5
+        self.l_exhaust = self.nac_length - (self.l_intake + self.l_engine)
+        self.disk_location = self.l_intake + 0.5  # Disk is inside the engine section
 
-# Fan visualization
-plt.plot(fan_x, fan_y, color="black", linewidth=2, label="Fan")
+    def calculate_geometry(self):
+        self.x = np.linspace(-self.extra_length, self.nac_length + self.extra_length, 700)
 
-# Annotations
-plt.text(-1.5, intake_radius + 0.2, "Free-stream", fontsize=10, color=region_colors["Free-stream"])
-plt.text(0.5, intake_radius + 0.2, "Intake", fontsize=10, color=region_colors["Intake"])
-plt.text(l_intake + 0.5, engine_radius + 0.2, "Before Fan", fontsize=10, color=region_colors["Before Fan"])
-plt.text(l_intake + l_engine / 2 + 0.5, engine_radius + 0.2, "After Fan", fontsize=10, color=region_colors["After Fan"])
-plt.text(length - 1.5, exhaust_radius + 0.2, "Exhaust", fontsize=10, color=region_colors["Exhaust"])
-plt.text(length + 0.5, exhaust_radius + 0.2, "Far Downstream", fontsize=10, color=region_colors["Far Downstream"])
+        # Outer radius profile
+        self.outer_radius = np.piecewise(
+            self.x,
+            [
+                self.x < 0,
+                (self.x >= 0) & (self.x < self.l_intake),
+                (self.x >= self.l_intake) & (self.x < self.disk_location),
+                (self.x >= self.disk_location) & (self.x < self.l_intake + self.l_engine),
+                (self.x >= self.l_intake + self.l_engine) & (self.x <= self.nac_length),
+                self.x > self.nac_length
+            ],
+            [
+                lambda x: self.inlet_radius,
+                lambda x: self.inlet_radius + (self.disk_radius - self.inlet_radius) * (x / self.l_intake),
+                lambda x: self.disk_radius,
+                lambda x: self.disk_radius - (self.disk_radius - self.exhaust_radius) * ((x - self.disk_location) / (self.l_engine - (self.disk_location - self.l_intake))),
+                lambda x: self.exhaust_radius,
+                lambda x: self.exhaust_radius
+            ]
+        )
 
-# Styling
-plt.axhline(0, color="black", linewidth=0.5, linestyle="--")
-plt.title("Updated 2D Electric Engine Nacelle Geometry with Velocity Scale", fontsize=14)
-plt.xlabel("Length (arbitrary units)", fontsize=12)
-plt.ylabel("Radius (arbitrary units)", fontsize=12)
-plt.grid(True)
-plt.axis("equal")
+        # Velocity profile
+        self.velocities = np.piecewise(
+            self.x,
+            [
+                self.x < 0,
+                (self.x >= 0) & (self.x < self.l_intake),
+                (self.x >= self.l_intake) & (self.x < self.disk_location),
+                (self.x >= self.disk_location) & (self.x < self.l_intake + self.l_engine),
+                (self.x >= self.l_intake + self.l_engine) & (self.x <= self.nac_length),
+                self.x > self.nac_length
+            ],
+            [
+                lambda x: self.v_inlet,
+                lambda x: self.v_inlet - 10,
+                lambda x: self.v_disk - 20,
+                lambda x: self.v_disk + 10,
+                lambda x: self.v_exhaust,
+                lambda x: self.v_exhaust
+            ]
+        )
 
-# Add the color bar for velocity scale
-cbar = plt.colorbar(sm, ax=plt.gca(), orientation='vertical', shrink=0.8)
-cbar.set_label('Velocity (m/s)', fontsize=12)
+    def plot_geometry(self, canvas_frame):
+        self.calculate_geometry()
 
-plt.legend()
-plt.show()
+        fig, ax = plt.subplots(figsize=(10, 5))
+        cmap = plt.cm.plasma
+        norm = Normalize(vmin=min(self.velocities), vmax=max(self.velocities))
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+
+        ax.fill_between(self.x, -self.outer_radius, self.outer_radius, color="lightgray", alpha=0.5, label="Nacelle Geometry")
+        ax.plot(self.x, self.outer_radius, color="darkred", linewidth=2)
+        ax.plot(self.x, -self.outer_radius, color="darkred", linewidth=2)
+
+        for i in range(len(self.x) - 1):
+            ax.fill_between(
+                [self.x[i], self.x[i + 1]],
+                [-self.outer_radius[i], -self.outer_radius[i + 1]],
+                [self.outer_radius[i], self.outer_radius[i + 1]],
+                color=cmap(norm(self.velocities[i])),
+                edgecolor="none",
+                alpha=0.7
+            )
+
+        fan_x = self.disk_location
+        ax.plot([fan_x, fan_x], [-self.disk_radius, self.disk_radius], color="black", linewidth=2, linestyle="--", label="Fan (Disk Location)")
+
+        exhaust_start = self.l_intake + self.l_engine
+        ax.plot([exhaust_start, exhaust_start], [-self.exhaust_radius, self.exhaust_radius], color="orange", linewidth=2, linestyle="--", label="Exhaust Boundary")
+        ax.fill_between([exhaust_start, self.nac_length], [-self.exhaust_radius, -self.exhaust_radius], [self.exhaust_radius, self.exhaust_radius], color="orange", alpha=0.3, label="Exhaust Air")
+
+        ax.text(-self.extra_length / 2, self.inlet_radius + 0.3, f"Inlet\nArea: {self.A_inlet:.2f} m²", color="blue", fontsize=10, ha="center")
+        ax.text(fan_x, self.disk_radius + 0.3, f"Fan (Disk)\nArea: {self.A_disk:.2f} m²", color="green", fontsize=10, ha="center")
+        ax.text((exhaust_start + self.nac_length) / 2, self.exhaust_radius + 0.3, f"Exhaust\nArea: {self.A_exhaust:.2f} m²", color="orange", fontsize=10, ha="center")
+
+        cbar = fig.colorbar(sm, ax=ax, orientation='vertical')
+        cbar.set_label('Velocity (m/s)', fontsize=12)
+
+        ax.set_title("2D Nacelle Geometry with Velocity and Section Representation", fontsize=16)
+        ax.set_xlabel("Length (m)", fontsize=12)
+        ax.set_ylabel("Radius (m)", fontsize=12)
+        ax.legend()
+        ax.grid()
+
+        canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
 
-print('---------End of Actuator Disk and Drag Analysis------------------------')
- 
+class NacelleApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Nacelle Visualization")
+
+        # Initialize FL and Mach as instance variables
+        self.FL = None
+        self.Mach = None
+
+        # Input Frame
+        input_frame = tk.Frame(root, padx=10, pady=10)
+        input_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        tk.Label(input_frame, text="Enter Flight Level (FL):").pack()
+        self.fl_entry = tk.Entry(input_frame)
+        self.fl_entry.pack()
+
+        tk.Label(input_frame, text="Enter Mach Number:").pack()
+        self.mach_entry = tk.Entry(input_frame)
+        self.mach_entry.pack()
+
+        submit_btn = tk.Button(input_frame, text="Visualize", command=self.visualize)
+        submit_btn.pack(pady=10)
+
+        # Canvas Frame for Plot
+        self.canvas_frame = tk.Frame(root, padx=10, pady=10)
+        self.canvas_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # Text Output Frame
+        self.output_frame = tk.Frame(root, padx=10, pady=10)
+        self.output_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.output_text = tk.Text(self.output_frame, wrap=tk.WORD, width=40, height=30)
+        self.output_text.pack(fill=tk.BOTH, expand=True)
+
+    def visualize(self):
+        # Clear previous output
+        self.output_text.delete("1.0", tk.END)
+
+        # Get user inputs
+        self.FL = float(self.fl_entry.get())
+        self.Mach = float(self.mach_entry.get())
+
+        # Initialize classes
+        flight_conditions = FlightConditions()
+        nacelle = NacelleParameters()
+
+        # Chapter 1: Flight Conditions
+        T, p, rho = flight_conditions.calculate_atmospheric_properties(self.FL)
+        v_inlet, v_freestream = flight_conditions.calculate_free_stream_velocity(self.Mach, self.FL)
+        self.output_text.insert(tk.END, 'Chapter 1: Flight Conditions\n')
+        self.output_text.insert(tk.END, f"Temperature: {T:.2f} K\n")
+        self.output_text.insert(tk.END, f"Pressure: {p:.2f} Pa\n")
+        self.output_text.insert(tk.END, f"Density: {rho:.6f} kg/m³\n")
+        self.output_text.insert(tk.END, f'Free-stream velocity: {v_freestream:.2f} m/s\n')
+        self.output_text.insert(tk.END, '------------------------------------------------------------------------\n')
+
+        # Chapter 2: Nacelle Parameters
+        A_inlet = nacelle.A_inlet
+        results_nacelle = nacelle.variable_parameters(v_inlet, A_inlet)
+        A_disk = results_nacelle[1]
+        v_disk = results_nacelle[5]
+        v_exhaust = results_nacelle[6]
+        self.output_text.insert(tk.END, 'Chapter 2: Nacelle Geometry\n')
+        self.output_text.insert(tk.END, f"Inlet Radius: {results_nacelle[3]:.2f} m\n")
+        self.output_text.insert(tk.END, f"Inlet Area: {results_nacelle[0]:.2f} m²\n")
+        self.output_text.insert(tk.END, f"Disk Area: {A_disk:.2f} m²\n")
+        self.output_text.insert(tk.END, f"Exhaust Area: {results_nacelle[2]:.2f} m²\n")
+        self.output_text.insert(tk.END, '------------------------------------------------------------------------\n')
+
+        # Chapter 3: Actuator Disk Model
+        actuator_model = ActuatorDiskModel(rho, A_disk, v_inlet, v_disk, 
+                                           nacelle.ηdisk, nacelle.ηmotor, nacelle.ηprop)
+        mdot, T, P_disk, P_total, _ = actuator_model.display_results()
+        self.output_text.insert(tk.END, 'Chapter 3: Basic Actuator Disk Model\n')
+        self.output_text.insert(tk.END, f"Mass flow rate (mdot): {mdot:.2f} kg/s\n")
+        self.output_text.insert(tk.END, f"Thrust (T): {T:.2f} N\n")
+        self.output_text.insert(tk.END, f"Power required at the disk (P_disk): {P_disk:.2f} W\n")
+        self.output_text.insert(tk.END, f"Total efficiency (ηTotal): {nacelle.ηTotal:.2f}\n")
+        self.output_text.insert(tk.END, f"Total electrical power required (P_total): {P_total:.2f} W\n")
+        self.output_text.insert(tk.END, '------------------------------------------------------------------------\n')
+
+        # Chapter 4: Drag by BLI Engine
+        bli_engine = DragbyBLIEngine(flight_conditions, nacelle, self.FL, self.Mach)
+        Dzero = bli_engine.calculate_zero_lift_drag()
+        self.output_text.insert(tk.END, 'Chapter 4: Drag Generated by BLI Engine\n')
+        self.output_text.insert(tk.END, f"Zero Lift Drag (Dzero): {Dzero:.2f} N\n")
+        self.output_text.insert(tk.END, '------------------------------------------------------------------------\n')
+
+        # Visualization
+        visualization = NacelleVisualization(
+            A_inlet=nacelle.A_inlet,
+            A_disk=A_disk,
+            A_exhaust=results_nacelle[2],
+            v_inlet=v_inlet,
+            v_disk=v_disk,
+            v_exhaust=v_exhaust,
+            nac_length=nacelle.nac_length,
+            inlet_radius=results_nacelle[3],
+            disk_radius=results_nacelle[8],
+            exhaust_radius=results_nacelle[4]
+        )
+        visualization.plot_geometry(self.canvas_frame)
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = NacelleApp(root)
+    root.mainloop()
+
