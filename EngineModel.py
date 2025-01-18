@@ -124,7 +124,7 @@ class ActuatorDiskModel:
         return T
 
     def calculate_power_disk(self, T): # Power required at the disk (P_disk)
-        P_disk = T * (self.v_inlet + self.v_disk)*10**-3
+        P_disk = T * (self.v_disk)*10**-3
         return P_disk
 
     def calculate_total_power(self, P_disk): # Total electrical power required (P_total) after the efficieny losses
@@ -180,7 +180,7 @@ class DragbyBLIEngine:
         print(f"Dynamic viscosity (mu): {mu} Pa·s")
         print(f"Reynolds number (Re): {Re}")
         print(f"Skin friction coefficient (cf): {cf}")
-        
+
         print(f"rho: {self.rho}")
         print(f"freestream: {self.v_freestream}")
 
