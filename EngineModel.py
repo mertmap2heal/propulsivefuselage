@@ -87,18 +87,22 @@ class NacelleParameters:
         self.ηTotal = self.ηmotor * self.ηprop * self.ηdisk
         self.nac_length = 2.8 # Nacelle Length (m)
 
-    def variable_parameters(self):
+    def variable_parameters(self,rho,p):
         A_disk = self.A_inlet * 0.9 # Disk Area (m^2)
         Inlet_radius = math.sqrt(self.A_inlet / math.pi) # Inlet Radius (m)
         Disk_radius = math.sqrt(A_disk / math.pi) # Disk Radius (m)
         v_disk = (self.A_inlet * self.v_inlet) / A_disk # Disk Velocity (m/s)
-
         v_exhaust = 2 * v_disk-self.v_inlet   # Exhaust Velocity (m/s)
         A_exhaust = A_disk * (v_disk / v_exhaust) # Exhaust Area (m^2)
         Exhaust_radius = math.sqrt(A_exhaust / math.pi) # Exhaust Radius (m)
- 
-        return self.A_inlet, A_disk, A_exhaust, Inlet_radius, Exhaust_radius, v_disk, v_exhaust, self.v_inlet, Disk_radius
+        
+        delta_p = 0.5 * rho * (v_disk**2 - v_exhaust**2) # Pressure difference (Pa) from bernoulli's equation
+        P2 = p + delta_p
 
+        Pressure_ratio = (P2+0.5*rho*v_exhaust**2) / (p+0.5*rho*self.v_inlet**2) # Pressure Ratio
+ 
+        return (self.A_inlet, A_disk, A_exhaust, Inlet_radius, Exhaust_radius, 
+                v_disk, v_exhaust, self.v_inlet, Disk_radius, Pressure_ratio)
 #---------------------------------------# 
 # Section 3 - Basic Actuator Disk Model #
 #---------------------------------------# 
@@ -114,7 +118,6 @@ class ActuatorDiskModel:
         self.ηTotal = self.ηmotor * self.ηprop * self.ηdisk
         self.v_exhaust = 2 *self.v_disk-self.v_inlet # Exhaust Velocity (m/s)
 
-
     def calculate_mass_flow_rate(self):   # Mass flow rate (mdot)
         mdot = self.rho * self.A_disk * self.v_disk
         return mdot
@@ -126,11 +129,10 @@ class ActuatorDiskModel:
     def calculate_power_disk(self, T): # Power required at the disk (P_disk)
         P_disk = T * (self.v_disk)*10**-3
         return P_disk
-
+    
     def calculate_total_power(self, P_disk): # Total electrical power required (P_total) after the efficieny losses
         P_total = (P_disk) / (self.ηTotal)
         return P_total
-
 
     def display_results(self):
         mdot = self.calculate_mass_flow_rate()
@@ -139,7 +141,6 @@ class ActuatorDiskModel:
         P_total = self.calculate_total_power(P_disk)
 
         return mdot, T, P_disk, P_total, self.A_disk
-
 
 #---------------------------------------# 
 # Section 4 - Drag Generation by BLI Engine #
@@ -152,13 +153,6 @@ class DragbyBLIEngine:
         self.A_inlet = nacelle_params.A_inlet
         self.inlet_radius = math.sqrt(self.A_inlet / math.pi)
         
-        print(f"Temperature (T): {self.T} K")
-        print(f"Density (rho): {self.rho} kg/m^3")
-        print(f"Free-stream velocity (v_freestream): {self.v_freestream} m/s")
-        print(f"Nacelle length (nac_length): {self.nac_length} m")
-        print(f"Inlet area (A_inlet): {self.A_inlet} m^2")
-        print(f"Inlet radius (inlet_radius): {self.inlet_radius} m")
-
     def calculate_zero_lift_drag(self):
         mu = (18.27 * 10**-6) * (411.15 / (self.T + 120)) * (self.T / 291.15) ** 1.5 # Dynamic Viscosity
         k = 10 * 10**-6 # Roughness of the surface - Al surface
@@ -176,24 +170,90 @@ class DragbyBLIEngine:
         fnacparasite = cf * Fnac * Snacwet 
         Dzero = 0.5 * self.rho * self.v_freestream**2 * fnacparasite # Zero Lift Drag
  
-        print(f"Cd0: {Cdzero}")
-        print(f"Dynamic viscosity (mu): {mu} Pa·s")
-        print(f"Reynolds number (Re): {Re}")
-        print(f"Skin friction coefficient (cf): {cf}")
-
-        print(f"rho: {self.rho}")
-        print(f"freestream: {self.v_freestream}")
-
-        print(f"Fineness ratio (f): {f}")
-        print(f"Wetted surface area (Snacwet): {Snacwet} m^2")
-        print(f"Parasite drag factor (fnacparasite): {fnacparasite}")
-        print(f"Zero-lift drag (Dzero): {Dzero} N")
+  
         
-        
-        return Dzero
+        return Dzero, Cdzero
+    
+#---------------------------------------# 
+# Section 5 - Mass Estimation of the Engine #
+#---------------------------------------# 
+
+class EngineMassEstimation:
+    def __init__(self, v_inlet, A_inlet, rho, p, nac_length):
+ 
+        # Instantiate NacelleParameters to extract necessary variables
+        nacelle = NacelleParameters(v_inlet, A_inlet)
+        results = nacelle.variable_parameters(rho, p)
+        inlet_radius = results[3]  # Extract inlet radius from NacelleParameters
+
+        # Shaft and rotor dimensions
+        self.D_Shaft = (inlet_radius * 2) * 0.10  # Shaft diameter in meters
+        self.l_Shaft = nac_length*0.4             # Shaft length in meters
+        self.rho_Shaft = 1500                     # Shaft material density (kg/m^3) - Composite
+
+        self.D_Rot = (inlet_radius * 2) * 0.85    # Rotor diameter in meters
+        self.l_Rot = self.l_Shaft * 0.5           # Rotor length in meters
+        self.rho_Rot = 1500                       # Rotor material density (kg/m^3) - Composite
+
+        # Magnet properties
+        self.p = 4                                # Number of pole pairs
+        self.alpha_Mag = math.radians(30)         # Magnet angle in radians
+        self.h_Mag = 0.01                         # Magnet height (m)
+        self.rho_Mag = 4800                       # Magnet density (kg/m^3) - Ceramic
+
+        # Stator properties
+        self.D_Core_i = 0.06                      # Inner core diameter of stator (m)
+        self.rho_Stator = 2800                    # Stator material density (kg/m^3)
+        self.N_Slots = 36                         # Number of slots
+        self.h_Slot = 0.025                       # Slot depth (m)
+        self.w_Teeth = 0.005                      # Tooth width (m)
+        self.delta_Slot = 0.0005                  # Slot depression depth (m)
+        self.w_Slot = 0.003                       # Slot width (m)
+
+        # Armature properties
+        self.N_Phases = 3                         # Number of phases
+        self.l_Conductor = 10                     # Total conductor length (m)
+        self.A_Conductor = 1e-6                   # Conductor cross-sectional area (m^2)
+        self.rho_Conductor = 2700                 # Conductor density (kg/m^3) - AL Conductor
+
+        # Other properties
+        self.k_Serv = 0.1                         # Service mass fraction
+
+    def calculate_shaft_mass(self):
+        return math.pi * (self.D_Shaft / 2) ** 2 * self.l_Shaft * self.rho_Shaft
+
+    def calculate_rotor_mass(self):
+        return ((self.D_Rot ** 2 - self.D_Shaft ** 2) * math.pi * self.l_Rot * self.rho_Rot) / 4
+
+    def calculate_magnet_mass(self):
+        return 0.5 * self.p * self.alpha_Mag * ((self.D_Rot / 2 + self.h_Mag) ** 2 - (self.D_Rot / 2) ** 2) * self.l_Rot * self.rho_Mag
+
+    def calculate_stator_mass(self):
+        iron_mass = (math.pi * self.l_Rot * (self.D_Rot ** 2 - self.D_Core_i ** 2) * self.rho_Stator) / 4
+        teeth_mass = self.l_Rot * self.N_Slots * (
+            (self.h_Slot * self.w_Teeth + math.pi * (self.D_Rot / self.N_Slots) * self.delta_Slot - self.w_Slot * self.delta_Slot)
+            * self.rho_Stator
+        )
+        return iron_mass + teeth_mass
+
+    def calculate_armature_mass(self):
+        return self.N_Phases * self.l_Conductor * self.A_Conductor * self.rho_Conductor
+
+    def calculate_service_mass(self, m_Shaft, m_Rot, m_Mag, m_Stator, m_Arm):
+        return self.k_Serv * (m_Shaft + m_Rot + m_Mag + m_Stator + m_Arm)
+
+    def calculate_total_motor_mass(self):
+        m_Shaft = self.calculate_shaft_mass()
+        m_Rot = self.calculate_rotor_mass()
+        m_Mag = self.calculate_magnet_mass()
+        m_Stator = self.calculate_stator_mass()
+        m_Arm = self.calculate_armature_mass()
+        m_Serv = self.calculate_service_mass(m_Shaft, m_Rot, m_Mag, m_Stator, m_Arm)
+        return m_Shaft + m_Rot + m_Mag + m_Stator + m_Arm + m_Serv
+
 
 #---------------------------------------# 
-# Section 5 - Visualization of the Engine Model #
+# Section 6 - Visualization of the Engine Model #
 #---------------------------------------# 
 class NacelleVisualization:
     def __init__(self, A_inlet, A_disk, A_exhaust, v_inlet, v_disk, v_exhaust, nac_length, inlet_radius, disk_radius, exhaust_radius):
@@ -359,10 +419,11 @@ class NacelleApp:
 
         # Chapter 2: Nacelle Parameters
         nacelle = NacelleParameters(v_inlet, self.A_inlet)
-        results_nacelle = nacelle.variable_parameters()
+        results_nacelle = nacelle.variable_parameters(rho,p)
         A_disk = results_nacelle[1]
         v_disk = results_nacelle[5]
         v_exhaust = results_nacelle[6]
+        Pressure_ratio = results_nacelle[9]
 
         self.output_text.insert(tk.END, 'Chapter 2: Nacelle Geometry\n')
         self.output_text.insert(tk.END, f"Inlet Radius: {results_nacelle[3]:.2f} m\n")
@@ -374,6 +435,7 @@ class NacelleApp:
         self.output_text.insert(tk.END, f"Exhaust Radius: {results_nacelle[4]:.2f} m\n")
         self.output_text.insert(tk.END, f"Exhaust Area: {results_nacelle[2]:.2f} m²\n")
         self.output_text.insert(tk.END, f"Exhaust Velocity: {v_exhaust:.2f} m/s\n")
+        self.output_text.insert(tk.END, f"Pressure Ratio: {Pressure_ratio:.2f}\n")    
         self.output_text.insert(tk.END, '--------------------------------\n')
 
         actuator_model = ActuatorDiskModel(rho, A_disk, v_inlet, v_disk)
@@ -389,12 +451,21 @@ class NacelleApp:
         self.output_text.insert(tk.END, f"Total electrical power required (P_total): {P_total:.2f} kW\n")
         self.output_text.insert(tk.END, '--------------------------------------\n')
 
+ 
         bli_engine = DragbyBLIEngine(flight_conditions, nacelle, self.FL, self.Mach)
         Dzero = bli_engine.calculate_zero_lift_drag()
 
         self.output_text.insert(tk.END, 'Chapter 4: Drag Generated by BLI Engine\n')
         self.output_text.insert(tk.END, f"Zero Lift Drag (Dzero): {Dzero:.2f} N\n")
         self.output_text.insert(tk.END, '---------------------------------------\n')
+
+
+        engine_mass = EngineMassEstimation(v_inlet, self.A_inlet, rho, p, nacelle.nac_length)
+        total_motor_mass = engine_mass.calculate_total_motor_mass()
+
+        self.output_text.insert(tk.END, 'Chapter 5: Engine Mass Estimation\n')
+        self.output_text.insert(tk.END, f"Total Motor Mass: {total_motor_mass:.2f} kg\n")
+        self.output_text.insert(tk.END, '--------------------------------------\n')
 
         visualization = NacelleVisualization(
             A_inlet=nacelle.A_inlet,
@@ -409,7 +480,6 @@ class NacelleApp:
             exhaust_radius=results_nacelle[4]
         )
         visualization.plot_geometry(self.canvas_frame)
-
 
 if __name__ == "__main__":
     root = tk.Tk()
