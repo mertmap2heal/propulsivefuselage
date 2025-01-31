@@ -392,16 +392,22 @@ class NacelleVisualization:
     def plot_geometry(self, canvas_frame):
         self.calculate_geometry()
 
-        fig, ax = plt.subplots(figsize=(8, 4))
+        # Calculate the dynamic figure width and height based on nacelle length
+        fig_width = max(8, self.nac_length / 2)
+        fig_height = fig_width / 4  # Maintain aspect ratio
+
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
         cmap = plt.cm.plasma
         norm = Normalize(vmin=min(self.velocities), vmax=max(self.velocities))
         sm = ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
 
+        # Plot nacelle geometry
         ax.fill_between(self.x, -self.outer_radius, self.outer_radius, color="lightgray", alpha=0.5, label="Nacelle Geometry")
         ax.plot(self.x, self.outer_radius, color="darkred", linewidth=2)
         ax.plot(self.x, -self.outer_radius, color="darkred", linewidth=2)
 
+        # Color segments based on velocity
         for i in range(len(self.x) - 1):
             ax.fill_between(
                 [self.x[i], self.x[i + 1]],
@@ -412,29 +418,37 @@ class NacelleVisualization:
                 alpha=0.7
             )
 
+        # Add fan and exhaust boundaries
         fan_x = self.disk_location
         ax.plot([fan_x, fan_x], [-self.disk_radius, self.disk_radius], color="black", linewidth=2, linestyle="--", label="Fan (Disk Location)")
-
         exhaust_start = self.l_intake + self.l_engine
         ax.plot([exhaust_start, exhaust_start], [-self.exhaust_radius, self.exhaust_radius], color="orange", linewidth=2, linestyle="--", label="Exhaust Boundary")
         ax.fill_between([exhaust_start, self.nac_length], [-self.exhaust_radius, -self.exhaust_radius], [self.exhaust_radius, self.exhaust_radius], color="orange", alpha=0.3, label="Exhaust Air")
 
+        # Add text labels
         ax.text(-self.extra_length / 2, self.inlet_radius, f"Inlet\nArea: {self.A_inlet:.2f} m²", color="black", fontsize=10, ha="center")
-        ax.text(fan_x, self.disk_radius , f"Fan (Disk)\nArea: {self.A_disk:.2f} m²", color="black", fontsize=10, ha="center")
-        ax.text((exhaust_start + self.nac_length) / 2, self.exhaust_radius , f"Exhaust\nArea: {self.A_exhaust:.2f} m²", color="black", fontsize=10, ha="center")
+        ax.text(fan_x, self.disk_radius, f"Fan (Disk)\nArea: {self.A_disk:.2f} m²", color="black", fontsize=10, ha="center")
+        ax.text((exhaust_start + self.nac_length) / 2, self.exhaust_radius, f"Exhaust\nArea: {self.A_exhaust:.2f} m²", color="black", fontsize=10, ha="center")
 
+        # Add a color bar for velocity
         cbar = fig.colorbar(sm, ax=ax, orientation='vertical')
         cbar.set_label('Velocity (m/s)', fontsize=12)
 
+        # Set labels and title
         ax.set_title("2D Nacelle Geometry with Velocity and Section Representation", fontsize=16)
         ax.set_xlabel("Length (m)", fontsize=12)
         ax.set_ylabel("Radius (m)", fontsize=12)
         ax.legend()
         ax.grid()
 
+        # Resize the Tkinter canvas to match the dynamic plot size
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.config(width=int(fig_width * 100), height=int(fig_height * 100))
+        canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+
 
 class NacelleApp:
     def __init__(self, root):
@@ -586,27 +600,51 @@ class NacelleApp:
         self.plot_fuselage_geometry(fuselage)
     
     def plot_fuselage_geometry(self, fuselage):
-        fig, ax1 = plt.subplots(figsize=(6, 3))
+        # Calculate the dynamic figure width and height based on fuselage length
+        fig_width = max(8, max(fuselage.x) / 2)
+        fig_height = fig_width / 4  # Maintain aspect ratio
+
+        fig, ax1 = plt.subplots(figsize=(fig_width, fig_height))
+
+        # Plot fuselage geometry
         ax1.plot(fuselage.x, fuselage.y_upper, 'b', label='Upper Surface')
         ax1.plot(fuselage.x, fuselage.y_lower, 'b', label='Lower Surface')
         ax1.fill_between(fuselage.x, fuselage.y_upper, fuselage.y_lower, color='lightblue', alpha=0.3)
+
+        # Add labels and title
         ax1.set_xlabel('Axial Position [m]')
         ax1.set_ylabel('Vertical Position [m]', color='b')
         ax1.set_title('Fuselage Geometry')
         ax1.grid(True)
-        
+
+        # Set aspect ratio to make the plot appear slender
+        ax1.set_aspect(aspect=0.3, adjustable='datalim')
+
+        # Create secondary axis for source strength
         ax2 = ax1.twinx()
         Q_analytical = fuselage.source_strength_thin_body()
         ax2.plot(fuselage.x, Q_analytical, 'r', label='Source Strength $Q(x)$')
         ax2.set_ylabel('Source Strength $Q(x)$ [m²/s]', color='r')
-        ax2.legend(loc='lower right')
-        
-        plt.tight_layout()
-        
-        # Display in Tkinter Canvas
+
+        # Dynamically calculate limits to align zero
+        y1_abs_max = max(abs(min(fuselage.y_lower)), abs(max(fuselage.y_upper)))
+        y2_abs_max = max(abs(min(Q_analytical)), abs(max(Q_analytical)))
+        ax1.set_ylim(-y1_abs_max, y1_abs_max)
+        ax2.set_ylim(-y2_abs_max, y2_abs_max)
+
+        # Add horizontal zero reference line
+        ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
+
+        # Adjust layout and add legends
+        ax1.legend(loc='upper left')
+        ax2.legend(loc='upper right')
+
+        # Resize the Tkinter canvas to match the dynamic plot size
         canvas = FigureCanvasTkAgg(fig, master=self.fuselage_canvas_frame)
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.config(width=int(fig_width * 100), height=int(fig_height * 100))
+        canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
 if __name__ == "__main__":
     root = tk.Tk()
