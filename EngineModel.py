@@ -6,11 +6,13 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import math
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
+from scipy.optimize import least_squares
 
 #---------------------------------------# 
 # Section 1 - Flight Conditions #
 #---------------------------------------# 
 class FlightConditions:
+
     def calculate_atmospheric_properties(self, FL):
         # Constants
         g_s = 9.80665  # m/s^2
@@ -254,66 +256,74 @@ class EngineMassEstimation:
 #---------------------------------------# 
 # Section 6- Potential Theory
 #---------------------------------------# 
+
+class PotentialTheory:
         #---------------------------------------# 
         # Section 6.1- Fuselage Geometry / Based on Airbus A320 # 
         #---------------------------------------# 
+ 
+    def __init__(self, v_freestream):
+        # Airbus A320 parameters
+        self.fuselage_length = 37.57  # meters
+        self.fuselage_radius = 2.0  # meters
+        self.nose_length = 3.0  # meters
+        self.tail_length = 10.0  # meters
+        self.free_stream_velocity = v_freestream  # Freestream velocity (m/s)
 
-class FuselageGeometry:
-    def __init__(self,):
-        #Based on Airbus A320 
-        self.fuselage_length=37.57 
-        self.fuselage_radius=2
-        self.nose_length=3
-        self.tail_length=10
-
-        N = 300
+ 
+        N = 1500
         self.x = np.linspace(0, self.fuselage_length, N)
-        self.y_upper = np.zeros(N)  # Upper surface  
-        self.y_lower = np.zeros(N)  # Lower surface  
+        self.y_upper = np.zeros(N)
+        self.y_lower = np.zeros(N)
 
-        for i in range(N):
-            if self.x[i] <= self.nose_length:
-                # Nose 
-                self.y_upper[i] = self.fuselage_radius * (1 - ((self.x[i] - self.nose_length) / self.nose_length) ** 2)
-                self.y_lower[i] = -self.y_upper[i]
-            elif self.x[i] > self.fuselage_length - self.tail_length:
-                # Tail 
-                self.y_upper[i] = self.fuselage_radius * (1 - ((self.x[i] - (self.fuselage_length - self.tail_length)) / self.tail_length) ** 2)
-                self.y_lower[i] = -self.y_upper[i]
+ 
+        for i, xi in enumerate(self.x):
+            if xi <= self.nose_length:
+                # Nose section (parabolic)
+                y = self.fuselage_radius * (1 - ((xi - self.nose_length) / self.nose_length) ** 2)
+                self.y_upper[i] = y
+                self.y_lower[i] = -y
+            elif xi >= self.fuselage_length - self.tail_length:
+                # Tail section (parabolic)
+                x_tail = xi - (self.fuselage_length - self.tail_length)
+                y = self.fuselage_radius * (1 - (x_tail / self.tail_length) ** 2)
+                self.y_upper[i] = y
+                self.y_lower[i] = -y
             else:
                 # Cylindrical section
                 self.y_upper[i] = self.fuselage_radius
                 self.y_lower[i] = -self.fuselage_radius
 
 
-    def plot_geometry(self):
-        plt.figure(figsize=(12, 5))
-        plt.plot(self.x, self.y_upper, 'b', label='Upper Surface')
-        plt.plot(self.x, self.y_lower, 'b', label='Lower Surface')
-        plt.fill_between(self.x, self.y_upper, self.y_lower, color='lightblue', alpha=0.3)
-        
-        plt.xlabel('Axial Position [m]')
-        plt.ylabel('Vertical Position [m]')
-        plt.title('Fuselage Geometry from side view')
-        plt.axhline(0, color='black', linestyle='--', linewidth=0.8)  # Centerline
-        plt.grid(True)
-        plt.legend()
-        plt.axis('equal')  
-        plt.show()
+        #---------------------------------------# 
+        # Section 6.2- Source Strength # 
+        #---------------------------------------# 
+
+    def source_strength_thin_body(self):  # Source strength (Q(x))
+
+        dr2_dx = np.zeros_like(self.x)
+        for i, xi in enumerate(self.x):
+            if xi <= self.nose_length: # Nose section
+                term = (xi - self.nose_length) / self.nose_length
+                dr2_dx[i] = 2 * self.fuselage_radius**2 * (1 - term**2) * (-2 * term / self.nose_length)
+            elif xi >= self.fuselage_length - self.tail_length: # Tail section
+                x_tail = xi - (self.fuselage_length - self.tail_length)
+                term = x_tail / self.tail_length
+                dr2_dx[i] = 2 * self.fuselage_radius**2 * (1 - term**2) * (-2 * term / self.tail_length)
+            else:
+                dr2_dx[i] = 0.0  # Cylindrical section has no cross-section change
+
+        return self.free_stream_velocity * np.pi * dr2_dx # Analytical computation of source strength
 
 
-#---------------------------------------# 
-# Section 6 - Potential Theory# To obtain the pressure gradient/distribution along the fuselage contour
-#---------------------------------------# 
+    def Fredholm_integral(self): 
+
+
+
+
+        return
 
  
-
-
-#---------------------------------------# 
-# Section 6 -Boundary Layer#
-#---------------------------------------# 
-
-
 #---------------------------------------# 
 # Section 7 - Visualization of the Engine Model #
 #---------------------------------------# 
@@ -382,7 +392,7 @@ class NacelleVisualization:
     def plot_geometry(self, canvas_frame):
         self.calculate_geometry()
 
-        fig, ax = plt.subplots(figsize=(10, 5))
+        fig, ax = plt.subplots(figsize=(8, 4))
         cmap = plt.cm.plasma
         norm = Normalize(vmin=min(self.velocities), vmax=max(self.velocities))
         sm = ScalarMappable(cmap=cmap, norm=norm)
@@ -409,9 +419,9 @@ class NacelleVisualization:
         ax.plot([exhaust_start, exhaust_start], [-self.exhaust_radius, self.exhaust_radius], color="orange", linewidth=2, linestyle="--", label="Exhaust Boundary")
         ax.fill_between([exhaust_start, self.nac_length], [-self.exhaust_radius, -self.exhaust_radius], [self.exhaust_radius, self.exhaust_radius], color="orange", alpha=0.3, label="Exhaust Air")
 
-        ax.text(-self.extra_length / 2, self.inlet_radius + 0.3, f"Inlet\nArea: {self.A_inlet:.2f} m²", color="blue", fontsize=10, ha="center")
-        ax.text(fan_x, self.disk_radius + 0.3, f"Fan (Disk)\nArea: {self.A_disk:.2f} m²", color="green", fontsize=10, ha="center")
-        ax.text((exhaust_start + self.nac_length) / 2, self.exhaust_radius + 0.3, f"Exhaust\nArea: {self.A_exhaust:.2f} m²", color="orange", fontsize=10, ha="center")
+        ax.text(-self.extra_length / 2, self.inlet_radius, f"Inlet\nArea: {self.A_inlet:.2f} m²", color="black", fontsize=10, ha="center")
+        ax.text(fan_x, self.disk_radius , f"Fan (Disk)\nArea: {self.A_disk:.2f} m²", color="black", fontsize=10, ha="center")
+        ax.text((exhaust_start + self.nac_length) / 2, self.exhaust_radius , f"Exhaust\nArea: {self.A_exhaust:.2f} m²", color="black", fontsize=10, ha="center")
 
         cbar = fig.colorbar(sm, ax=ax, orientation='vertical')
         cbar.set_label('Velocity (m/s)', fontsize=12)
@@ -429,38 +439,67 @@ class NacelleVisualization:
 class NacelleApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Nacelle Visualization")
+        self.root.title("Nacelle and Fuselage Visualization")
+
+        # Maximize the window
+        self.root.state('zoomed')
 
         self.FL = None
         self.Mach = None
         self.A_inlet = None
 
-        input_frame = tk.Frame(root, padx=10, pady=10)
-        input_frame.pack(side=tk.LEFT, fill=tk.Y)
+        # Create a main frame to hold all content
+        main_frame = tk.Frame(root, padx=10, pady=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(input_frame, text="Enter the Flight Height (Feet):").pack()
+        # Input and Output Frame (Left Side Bar)
+        io_frame = tk.Frame(main_frame, padx=10, pady=10)
+        io_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        # Input Frame
+        input_frame = tk.LabelFrame(io_frame, text="Inputs", padx=10, pady=10)
+        input_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(input_frame, text="Enter the Flight Height (Feet):").pack(anchor='w')
         self.fl_entry = tk.Entry(input_frame)
-        self.fl_entry.pack()
+        self.fl_entry.pack(fill=tk.X, pady=2)
 
-        tk.Label(input_frame, text="Enter Mach Number:").pack()
+        tk.Label(input_frame, text="Enter Mach Number:").pack(anchor='w')
         self.mach_entry = tk.Entry(input_frame)
-        self.mach_entry.pack()
+        self.mach_entry.pack(fill=tk.X, pady=2)
 
-        tk.Label(input_frame, text="Enter Inlet Area (m²):").pack()
+        tk.Label(input_frame, text="Enter Inlet Area (m²):").pack(anchor='w')
         self.area_entry = tk.Entry(input_frame)
-        self.area_entry.pack()
+        self.area_entry.pack(fill=tk.X, pady=2)
 
         submit_btn = tk.Button(input_frame, text="Visualize", command=self.visualize)
         submit_btn.pack(pady=10)
 
-        self.canvas_frame = tk.Frame(root, padx=10, pady=10)
-        self.canvas_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        # Output Frame
+        output_frame = tk.LabelFrame(io_frame, text="Outputs", padx=10, pady=10)
+        output_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.output_frame = tk.Frame(root, padx=10, pady=10)
-        self.output_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.output_text = tk.Text(self.output_frame, wrap=tk.WORD, width=40, height=30)
+        self.output_text = tk.Text(output_frame, wrap=tk.WORD, width=40, height=30)
         self.output_text.pack(fill=tk.BOTH, expand=True)
+
+        # Canvas for Nacelle Visualization (Main Window)
+        self.canvas_frame = tk.LabelFrame(main_frame, text="Nacelle Visualization", padx=10, pady=10)
+        self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Side frame for additional visualizations
+        side_frame = tk.Frame(main_frame, padx=10, pady=10)
+        side_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # Fuselage Geometry Frame (Top Right)
+        self.fuselage_canvas_frame = tk.LabelFrame(side_frame, text="Fuselage Geometry", padx=10, pady=10)
+        self.fuselage_canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Additional Empty Frames (Bottom Right)
+        self.additional_frame1 = tk.LabelFrame(side_frame, text="Additional Visualization 1", padx=10, pady=10)
+        self.additional_frame1.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.additional_frame2 = tk.LabelFrame(side_frame, text="Additional Visualization 2", padx=10, pady=10)
+        self.additional_frame2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def visualize(self):
         self.output_text.delete("1.0", tk.END)
@@ -479,13 +518,12 @@ class NacelleApp:
         self.output_text.insert(tk.END, f"Free-stream velocity: {v_freestream:.2f} m/s\n")
         self.output_text.insert(tk.END, '-----------------------------\n')
 
-        # Chapter 2: Nacelle Parameters
+        # Chapter 2: Nacelle Geometry
         nacelle = NacelleParameters(v_inlet, self.A_inlet)
-        results_nacelle = nacelle.variable_parameters(rho,p)
+        results_nacelle = nacelle.variable_parameters(rho, p)
         A_disk = results_nacelle[1]
         v_disk = results_nacelle[5]
         v_exhaust = results_nacelle[6]
-        Pressure_ratio = results_nacelle[9]
 
         self.output_text.insert(tk.END, 'Chapter 2: Nacelle Geometry\n')
         self.output_text.insert(tk.END, f"Inlet Radius: {results_nacelle[3]:.2f} m\n")
@@ -497,12 +535,11 @@ class NacelleApp:
         self.output_text.insert(tk.END, f"Exhaust Radius: {results_nacelle[4]:.2f} m\n")
         self.output_text.insert(tk.END, f"Exhaust Area: {results_nacelle[2]:.2f} m²\n")
         self.output_text.insert(tk.END, f"Exhaust Velocity: {v_exhaust:.2f} m/s\n")
-        self.output_text.insert(tk.END, f"Pressure Ratio: {Pressure_ratio:.2f}\n")    
+        self.output_text.insert(tk.END, f"Pressure Ratio: {results_nacelle[9]:.2f}\n")
         self.output_text.insert(tk.END, '--------------------------------\n')
 
+        # Chapter 3: Basic Actuator Disk Model
         actuator_model = ActuatorDiskModel(rho, A_disk, v_inlet, v_disk)
-
-
         mdot, T, P_disk, P_total, _ = actuator_model.display_results()
 
         self.output_text.insert(tk.END, 'Chapter 3: Basic Actuator Disk Model\n')
@@ -513,7 +550,7 @@ class NacelleApp:
         self.output_text.insert(tk.END, f"Total electrical power required (P_total): {P_total:.2f} kW\n")
         self.output_text.insert(tk.END, '--------------------------------------\n')
 
- 
+        # Chapter 4: Drag Generated by BLI Engine
         bli_engine = DragbyBLIEngine(flight_conditions, nacelle, self.FL, self.Mach)
         Dzero = bli_engine.calculate_zero_lift_drag()
 
@@ -521,7 +558,7 @@ class NacelleApp:
         self.output_text.insert(tk.END, f"Zero Lift Drag (Dzero): {Dzero[0]:.2f} N\n")
         self.output_text.insert(tk.END, '---------------------------------------\n')
 
-
+        # Chapter 5: Engine Mass Estimation
         engine_mass = EngineMassEstimation(v_inlet, self.A_inlet, rho, p, nacelle.nac_length)
         total_motor_mass = engine_mass.calculate_total_motor_mass()
 
@@ -529,6 +566,7 @@ class NacelleApp:
         self.output_text.insert(tk.END, f"Total Motor Mass: {total_motor_mass:.2f} kg\n")
         self.output_text.insert(tk.END, '--------------------------------------\n')
 
+        # Generate the Nacelle Visualization Plot
         visualization = NacelleVisualization(
             A_inlet=nacelle.A_inlet,
             A_disk=A_disk,
@@ -542,6 +580,33 @@ class NacelleApp:
             exhaust_radius=results_nacelle[4]
         )
         visualization.plot_geometry(self.canvas_frame)
+
+        # Generate the Fuselage Geometry Plot
+        fuselage = PotentialTheory(v_freestream)
+        self.plot_fuselage_geometry(fuselage)
+    
+    def plot_fuselage_geometry(self, fuselage):
+        fig, ax1 = plt.subplots(figsize=(6, 3))
+        ax1.plot(fuselage.x, fuselage.y_upper, 'b', label='Upper Surface')
+        ax1.plot(fuselage.x, fuselage.y_lower, 'b', label='Lower Surface')
+        ax1.fill_between(fuselage.x, fuselage.y_upper, fuselage.y_lower, color='lightblue', alpha=0.3)
+        ax1.set_xlabel('Axial Position [m]')
+        ax1.set_ylabel('Vertical Position [m]', color='b')
+        ax1.set_title('Fuselage Geometry')
+        ax1.grid(True)
+        
+        ax2 = ax1.twinx()
+        Q_analytical = fuselage.source_strength_thin_body()
+        ax2.plot(fuselage.x, Q_analytical, 'r', label='Source Strength $Q(x)$')
+        ax2.set_ylabel('Source Strength $Q(x)$ [m²/s]', color='r')
+        ax2.legend(loc='lower right')
+        
+        plt.tight_layout()
+        
+        # Display in Tkinter Canvas
+        canvas = FigureCanvasTkAgg(fig, master=self.fuselage_canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
 if __name__ == "__main__":
     root = tk.Tk()
