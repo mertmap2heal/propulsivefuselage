@@ -336,7 +336,7 @@ class Flow_around_fuselage:
             U += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dx / r_sq)
             V += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dy / r_sq)
              
-        for i in range(len(self.x)): # To prevent the flow from penetrating the fuselage, we set the velocity to zero inside the fuselage
+        for i in range(len(self.x)): # To prevent the flow from penetrating the fuselage
             x_mask = (X >= self.x[i] - self.dx/2) & (X <= self.x[i] + self.dx/2)
             y_mask = (Y >= -self.R[i]) & (Y <= self.R[i])
             U[x_mask & y_mask] = np.nan
@@ -376,24 +376,26 @@ class Flow_around_fuselage:
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
-''' 
-    def pressure_distribution(self,Mach): # After Mach 0.3, we need to consider the compressibility effects. The flow is no longer incompressible.
+ 
+    def pressure_distribution(self): # After Mach 0.3, we need to consider the compressibility effects. The flow is no longer incompressible.
 
         Cp_incompressible = np.zeros_like(self.x)
         Cp_compressible=np.zeros_like(self.x)
+
         for i in range(len(self.x)):
              
             U, V = self.velocity_components_around_fuselage(self.x[i], 0)
-
-            Cp_incompressible[i] = 1- ((np.sqrt(U**2+V**2)+self.free_stream_velocity)/self.free_stream_velocity)**2  
-            Cp_compressible[i] =Cp_incompressible[i]/np.sqrt(1-Mach**2)
-
-            print('Incompressible',Cp_incompressible[i])
-            print('Compressible',Cp_compressible[i])
+            if self.Mach > 0.3:
+                Cp_incompressible[i] = 1- ((np.sqrt(U**2+V**2))/self.free_stream_velocity)**2  
+                Cp_compressible[i] =Cp_incompressible[i]/np.sqrt(1-self.Mach**2)
+            else:
+                Cp_incompressible[i] = 1- ((np.sqrt(U**2+V**2))/self.free_stream_velocity)**2  
+                Cp_compressible[i] =Cp_incompressible[i]
 
         return  Cp_incompressible , Cp_compressible
-''' 
- 
+    
+
+
 #---------------------------------------# 
 # Section 7 - Visualization of the Engine Model #
 #---------------------------------------# 
@@ -570,8 +572,8 @@ class NacelleApp:
         self.root = root
         self.root.title("Nacelle and Fuselage Visualization")
 
-        # Maximize the window
-        self.root.state('zoomed')
+        
+        self.root.state('zoomed') # Maximizing the window
 
         self.FL = None
         self.Mach = None
@@ -725,13 +727,14 @@ class NacelleApp:
         fig, ax1 = plt.subplots(figsize=(fig_width, fig_height))
 
         # Plot fuselage geometry
-        ax1.plot(fuselage.x, fuselage.y_upper, 'b', label='Upper Surface')
-        ax1.plot(fuselage.x, fuselage.y_lower, 'b', label='Lower Surface')
+        ax1.plot(fuselage.x, fuselage.y_upper, 'b', label='Fuselage')
+        ax1.plot(fuselage.x, fuselage.y_lower, 'b')
         ax1.fill_between(fuselage.x, fuselage.y_upper, fuselage.y_lower, color='lightblue', alpha=0.3)
+        
 
         # Add labels and title
         ax1.set_xlabel('Axial Position [m]')
-        ax1.set_ylabel('Vertical Position [m]', color='b')
+        ax1.set_ylabel('Vertical Position [m]',fontsize=9, color='b')
         ax1.set_title('Fuselage Geometry and Source Strength Along the Fuselage')
         ax1.grid(True)
 
@@ -742,7 +745,8 @@ class NacelleApp:
         ax2 = ax1.twinx()
         Q_analytical = fuselage.source_strength_thin_body()
         ax2.plot(fuselage.x, Q_analytical, 'r', label='Source Strength $Q(x)$')
-        ax2.set_ylabel('Source Strength $Q(x)$ [m²/s]', color='r')
+        ax2.set_ylabel('Source Strength $Q(x)$ [m²/s]', color='r', fontsize=9, labelpad=0)   
+       
 
         # Dynamically calculate limits to align zero
         y1_abs_max = max(abs(min(fuselage.y_lower)), abs(max(fuselage.y_upper)))
