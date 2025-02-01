@@ -411,7 +411,8 @@ class Flow_around_fuselage:
         ax.set_ylim(-6, 6)
 
         ax.set_xlabel('Axial Position [m]')
-        ax.set_ylabel('Pressure Coefficient (Cp) / Radius [m]')
+        ax.set_ylabel('Pressure Coefficient (Cp)', fontsize=9)
+
         ax.set_title('Pressure Coefficient Distribution and Fuselage Geometry')
         ax.legend()
         ax.grid(True)
@@ -668,24 +669,20 @@ class BoundaryLayerIngestion:
         # Configure grid layout
         side_frame.grid_rowconfigure(0, weight=1)  # Pressure
         side_frame.grid_rowconfigure(1, weight=1)  # Fuselage
-        side_frame.grid_rowconfigure(2, weight=1)  # Source
         side_frame.grid_rowconfigure(3, weight=1)  # Velocity
         side_frame.grid_columnconfigure(0, weight=1)
 
         # Pressure Distribution (Top)
-        self.pressure_canvas_frame = tk.LabelFrame(side_frame, text="Pressure Distribution", padx=10, pady=10)
+        self.pressure_canvas_frame = tk.LabelFrame(side_frame, text="Pressure Constant Distribution Along the Fuselage ", padx=10, pady=10)
         self.pressure_canvas_frame.grid(row=0, column=0, sticky='nsew', padx=5, pady=2)
 
         # Fuselage Geometry
-        self.fuselage_canvas_frame = tk.LabelFrame(side_frame, text="Fuselage Geometry", padx=10, pady=10)
+        self.fuselage_canvas_frame = tk.LabelFrame(side_frame, text="Source Strength Along the Fuselage", padx=10, pady=10)
         self.fuselage_canvas_frame.grid(row=1, column=0, sticky='nsew', padx=5, pady=2)
 
-        # Source Strength
-        self.additional_frame1 = tk.LabelFrame(side_frame, text="Source Strength", padx=10, pady=10)
-        self.additional_frame1.grid(row=2, column=0, sticky='nsew', padx=5, pady=2)
-
+ 
         # Velocity Field (Bottom)
-        self.additional_frame2 = tk.LabelFrame(side_frame, text="Velocity Field", padx=10, pady=10)
+        self.additional_frame2 = tk.LabelFrame(side_frame, text="Velocity Field Along the Fuselage", padx=10, pady=10)
         self.additional_frame2.grid(row=3, column=0, sticky='nsew', padx=5, pady=2)
         
     def visualize(self):
