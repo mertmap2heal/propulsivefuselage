@@ -258,13 +258,14 @@ class EngineMassEstimation:
 #---------------------------------------# 
 
 class Flow_around_fuselage:
-    def __init__(self, v_freestream):
+    def __init__(self, v_freestream,Mach):
         # Airbus A320 parameters
         self.fuselage_length = 37.57  # meters
         self.fuselage_radius = 2.0  # meters / Average fuselage radius
         self.nose_length = 3.0  # meters / Approximate nose length
         self.tail_length = 10.0  # meters / Approximate tail length
         self.free_stream_velocity = v_freestream  # Freestream velocity (m/s)
+        self.Mach = Mach
 
         N = 1500 # Number of points along the fuselage, can be adjusted for better resolution
         self.x = np.linspace(0, self.fuselage_length, N) # Divides the fuselage to N points equally
@@ -277,13 +278,17 @@ class Flow_around_fuselage:
                 # Nose section / The nose and tail sections of the equations can be tuned according to real life examples
                 y = self.fuselage_radius * (1 - ((xi - self.nose_length) / self.nose_length) ** 2)
                 self.y_upper[i] = y
+
                 self.y_lower[i] = -y
+
             elif xi >= self.fuselage_length - self.tail_length:
                 # Tail section  
                 x_tail = xi - (self.fuselage_length - self.tail_length)
                 y = self.fuselage_radius * (1 - (x_tail / self.tail_length) ** 2)
                 self.y_upper[i] = y
+
                 self.y_lower[i] = -y
+                
             else:
                 # Cylindrical section
                 self.y_upper[i] = self.fuselage_radius
@@ -299,11 +304,15 @@ class Flow_around_fuselage:
         for i, xi in enumerate(self.x):
             if xi <= self.nose_length:  # Nose section
                 term = (xi - self.nose_length) / self.nose_length
-                dr2_dx[i] = 2 * self.fuselage_radius**2 * (1 - term**2) * (-2 * term / self.nose_length)
+                dr2_dx[i] = 2 * (self.fuselage_radius*np.sqrt(1-self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.nose_length)  # Compresibility effects are taken into account /  Prandtl-Glauert correction applied to adjust the source strength
+                #dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.tail_length)  # Incompressible
+
             elif xi >= self.fuselage_length - self.tail_length:  # Tail section
                 x_tail = xi - (self.fuselage_length - self.tail_length)
                 term = x_tail / self.tail_length
-                dr2_dx[i] = 2 * self.fuselage_radius**2 * (1 - term**2) * (-2 * term / self.tail_length)
+                dr2_dx[i] = 2 * (self.fuselage_radius*np.sqrt(1-self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.tail_length)  # Compresibility effects are taken into account /  Prandtl-Glauert correction applied to adjust the source strength 
+                #dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.tail_length)  # Incompressible
+
             else:
                 dr2_dx[i] = 0.0  # Cylindrical section has no cross-section change, source strength is zero
 
@@ -326,15 +335,14 @@ class Flow_around_fuselage:
             # Add source contribution to velocity field
             U += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dx / r_sq)
             V += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dy / r_sq)
-
-        
+             
         for i in range(len(self.x)): # To prevent the flow from penetrating the fuselage, we set the velocity to zero inside the fuselage
             x_mask = (X >= self.x[i] - self.dx/2) & (X <= self.x[i] + self.dx/2)
             y_mask = (Y >= -self.R[i]) & (Y <= self.R[i])
             U[x_mask & y_mask] = np.nan
             V[x_mask & y_mask] = np.nan
             
-        return U, V
+        return U, V 
 
     def plot_velocity_streamlines(self, canvas_frame):
          
@@ -368,7 +376,23 @@ class Flow_around_fuselage:
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
+''' 
+    def pressure_distribution(self,Mach): # After Mach 0.3, we need to consider the compressibility effects. The flow is no longer incompressible.
 
+        Cp_incompressible = np.zeros_like(self.x)
+        Cp_compressible=np.zeros_like(self.x)
+        for i in range(len(self.x)):
+             
+            U, V = self.velocity_components_around_fuselage(self.x[i], 0)
+
+            Cp_incompressible[i] = 1- ((np.sqrt(U**2+V**2)+self.free_stream_velocity)/self.free_stream_velocity)**2  
+            Cp_compressible[i] =Cp_incompressible[i]/np.sqrt(1-Mach**2)
+
+            print('Incompressible',Cp_incompressible[i])
+            print('Compressible',Cp_compressible[i])
+
+        return  Cp_incompressible , Cp_compressible
+''' 
  
 #---------------------------------------# 
 # Section 7 - Visualization of the Engine Model #
@@ -687,7 +711,7 @@ class NacelleApp:
         visualization.plot_geometry(self.canvas_frame)
 
         # Generate the Fuselage Geometry Plot
-        fuselage = Flow_around_fuselage(v_freestream)
+        fuselage = Flow_around_fuselage(v_freestream,self.Mach)
         self.plot_fuselage_geometry(fuselage)
 
         # Plot the 2D velocity field with streamlines
