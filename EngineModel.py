@@ -171,9 +171,6 @@ class DragbyBLIEngine:
         Snacwet = math.pi * 2 * self.inlet_radius * self.nac_length # Wetted Surface Area
         fnacparasite = cf * Fnac * Snacwet 
         Dzero = 0.5 * self.rho * self.v_freestream**2 * fnacparasite # Zero Lift Drag
- 
-  
-        
         return Dzero, Cdzero
     
 #---------------------------------------# 
@@ -254,7 +251,7 @@ class EngineMassEstimation:
         return m_Shaft + m_Rot + m_Mag + m_Stator + m_Arm + m_Serv
     
 #---------------------------------------# 
-# Section 6- Potential Theory / with the assumption of, incompressible, inviscid, irrotational flow #
+# Section 6- Potential Theory  
 #---------------------------------------# 
 
 class Flow_around_fuselage:
@@ -394,6 +391,10 @@ class Flow_around_fuselage:
         return Cp_incompressible, Cp_compressible, Cp_compressible
 
     def plot_pressure_distribution(self, canvas_frame):
+        # Clear previous widgets in the canvas_frame
+        for widget in canvas_frame.winfo_children():
+            widget.destroy()
+
         Cp_incompressible, Cp_compressible, Cp = self.pressure_distribution()
 
         fig, ax = plt.subplots(figsize=(12, 4))
@@ -416,14 +417,13 @@ class Flow_around_fuselage:
         ax.grid(True)
 
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
 #---------------------------------------# 
 # Section 7 - Visualization of the Engine Model #
 #---------------------------------------# 
-class NacelleVisualization:
+class EngineVisualization:
     def __init__(self, A_inlet, A_disk, A_exhaust, v_inlet, v_disk, v_exhaust, nac_length, inlet_radius, disk_radius, exhaust_radius):
         self.A_inlet = A_inlet
         self.A_disk = A_disk
@@ -609,16 +609,13 @@ class NacelleVisualization:
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
-#---------------------------------------#
+
 # Section 8 - Main Application with Tkinter #
 #---------------------------------------#
-#---------------------------------------#
-# Section 8 - Main Application with Tkinter #
-#---------------------------------------#
-class NacelleApp:
+class BoundaryLayerIngestion:
     def __init__(self, root):
         self.root = root
-        self.root.title("Nacelle and Fuselage Visualization")
+        self.root.title("Boundary Layer Ingestion Concept Data Screen")
         self.root.state('zoomed')  # Maximize window
 
         self.FL = None
@@ -633,7 +630,7 @@ class NacelleApp:
         io_frame = tk.Frame(main_frame, padx=10, pady=10)
         io_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
 
-        # Input Frame
+        # Input Frame (unchanged)
         input_frame = tk.LabelFrame(io_frame, text="Inputs", padx=10, pady=10)
         input_frame.pack(fill=tk.X, pady=5)
 
@@ -652,35 +649,45 @@ class NacelleApp:
         submit_btn = tk.Button(input_frame, text="Visualize", command=self.visualize)
         submit_btn.pack(pady=10)
 
-        # Output Frame
+        # Output Frame (unchanged)
         output_frame = tk.LabelFrame(io_frame, text="Outputs", padx=10, pady=10)
         output_frame.pack(fill=tk.BOTH, expand=True)
         self.output_text = tk.Text(output_frame, wrap=tk.WORD, width=40, height=30)
         self.output_text.pack(fill=tk.BOTH, expand=True)
 
-        # Canvas for Nacelle Visualization (Center)
-        self.canvas_frame = tk.LabelFrame(main_frame, text="Nacelle Visualization", padx=10, pady=10)
+        # Canvas for Nacelle Visualization (Center - unchanged)
+        self.canvas_frame = tk.LabelFrame(main_frame, text="2D Engine Visualization", padx=10, pady=10)
         self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Side frame for additional visualizations (Right)
-        side_frame = tk.Frame(main_frame, padx=10, pady=10)
+        #---------------------------------------------
+        # Modified Right Side Layout (Grid System)
+        #---------------------------------------------
+        side_frame = tk.Frame(main_frame)
         side_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # Fuselage Geometry Frame (Top Right)
-        self.fuselage_canvas_frame = tk.LabelFrame(side_frame, text="Fuselage Geometry", padx=10, pady=10)
-        self.fuselage_canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Configure grid layout
+        side_frame.grid_rowconfigure(0, weight=1)  # Pressure
+        side_frame.grid_rowconfigure(1, weight=1)  # Fuselage
+        side_frame.grid_rowconfigure(2, weight=1)  # Source
+        side_frame.grid_rowconfigure(3, weight=1)  # Velocity
+        side_frame.grid_columnconfigure(0, weight=1)
 
-        # Additional Frames for Source Strength and Velocity Field
-        self.additional_frame1 = tk.LabelFrame(side_frame, text="Source Strength", padx=10, pady=10)
-        self.additional_frame1.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        self.additional_frame2 = tk.LabelFrame(side_frame, text="Velocity Field", padx=10, pady=10)
-        self.additional_frame2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # New Frame for Pressure Distribution
+        # Pressure Distribution (Top)
         self.pressure_canvas_frame = tk.LabelFrame(side_frame, text="Pressure Distribution", padx=10, pady=10)
-        self.pressure_canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.pressure_canvas_frame.grid(row=0, column=0, sticky='nsew', padx=5, pady=2)
 
+        # Fuselage Geometry
+        self.fuselage_canvas_frame = tk.LabelFrame(side_frame, text="Fuselage Geometry", padx=10, pady=10)
+        self.fuselage_canvas_frame.grid(row=1, column=0, sticky='nsew', padx=5, pady=2)
+
+        # Source Strength
+        self.additional_frame1 = tk.LabelFrame(side_frame, text="Source Strength", padx=10, pady=10)
+        self.additional_frame1.grid(row=2, column=0, sticky='nsew', padx=5, pady=2)
+
+        # Velocity Field (Bottom)
+        self.additional_frame2 = tk.LabelFrame(side_frame, text="Velocity Field", padx=10, pady=10)
+        self.additional_frame2.grid(row=3, column=0, sticky='nsew', padx=5, pady=2)
+        
     def visualize(self):
         self.output_text.delete("1.0", tk.END)
         self.FL = float(self.fl_entry.get())
@@ -690,7 +697,7 @@ class NacelleApp:
         flight_conditions = FlightConditions()
         T, p, rho = flight_conditions.calculate_atmospheric_properties(self.FL)
         v_inlet, v_freestream = flight_conditions.calculate_free_stream_velocity(self.Mach, self.FL)
-
+        
         self.output_text.insert(tk.END, 'Chapter 1: Flight Conditions\n')
         self.output_text.insert(tk.END, f"Temperature: {T:.2f} K\n")
         self.output_text.insert(tk.END, f"Pressure: {p:.2f} Pa\n")
@@ -747,7 +754,7 @@ class NacelleApp:
         self.output_text.insert(tk.END, '--------------------------------------\n')
 
         # Generate the Nacelle Visualization Plot
-        visualization = NacelleVisualization(
+        visualization = EngineVisualization(
             A_inlet=nacelle.A_inlet,
             A_disk=A_disk,
             A_exhaust=results_nacelle[2],
@@ -768,7 +775,7 @@ class NacelleApp:
         # Plot the 2D velocity field with streamlines
         fuselage.plot_velocity_streamlines(self.additional_frame2)
 
-        # Plot Pressure Distribution in the dedicated frame
+        # Plot Pressure Distribution in the dedicated frame (already in your code)
         fuselage.plot_pressure_distribution(self.pressure_canvas_frame)
 
     def plot_fuselage_geometry(self, fuselage):
@@ -799,8 +806,8 @@ class NacelleApp:
 
         ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
 
-        ax1.legend(loc='upper left')
-        ax2.legend(loc='upper right')
+        ax1.legend(loc='lower left')
+        ax2.legend(loc='lower right')
 
         canvas = FigureCanvasTkAgg(fig, master=self.fuselage_canvas_frame)
         canvas_widget = canvas.get_tk_widget()
@@ -810,5 +817,5 @@ class NacelleApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = NacelleApp(root)
+    app = BoundaryLayerIngestion(root)
     root.mainloop()
