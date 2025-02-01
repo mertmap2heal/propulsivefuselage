@@ -258,7 +258,7 @@ class EngineMassEstimation:
 #---------------------------------------# 
 
 class Flow_around_fuselage:
-    def __init__(self, v_freestream,Mach):
+    def __init__(self, v_freestream, Mach):
         # Airbus A320 parameters
         self.fuselage_length = 37.57  # meters
         self.fuselage_radius = 2.0  # meters / Average fuselage radius
@@ -267,86 +267,90 @@ class Flow_around_fuselage:
         self.free_stream_velocity = v_freestream  # Freestream velocity (m/s)
         self.Mach = Mach
 
-        N = 1500 # Number of points along the fuselage, can be adjusted for better resolution
-        self.x = np.linspace(0, self.fuselage_length, N) # Divides the fuselage to N points equally
+        N = 1500  # Number of points along the fuselage, can be adjusted for better resolution
+        self.x = np.linspace(0, self.fuselage_length, N)  # Divides the fuselage into N equally spaced points
         self.y_upper = np.zeros(N)
         self.y_lower = np.zeros(N)
 
         # Defining the fuselage geometry using analytical expressions
         for i, xi in enumerate(self.x):
             if xi <= self.nose_length:
-                # Nose section / The nose and tail sections of the equations can be tuned according to real life examples
+                # Nose section / # Nose section / The nose and tail sections of the equations can be tuned according to real life examples
                 y = self.fuselage_radius * (1 - ((xi - self.nose_length) / self.nose_length) ** 2)
                 self.y_upper[i] = y
-
                 self.y_lower[i] = -y
-
             elif xi >= self.fuselage_length - self.tail_length:
-                # Tail section  
+                # Tail section
                 x_tail = xi - (self.fuselage_length - self.tail_length)
                 y = self.fuselage_radius * (1 - (x_tail / self.tail_length) ** 2)
                 self.y_upper[i] = y
-
                 self.y_lower[i] = -y
-                
             else:
                 # Cylindrical section
                 self.y_upper[i] = self.fuselage_radius
                 self.y_lower[i] = -self.fuselage_radius
 
-        
-        self.R = np.abs(self.y_upper) # Array stores the radius of the fuselage at each point
-        self.dx = self.x[1] - self.x[0]  # Grid spacing, depends on N
-        self.source_strength = self.source_strength_thin_body()  # Calls the function 
+        self.R = np.abs(self.y_upper)  # Fuselage radius at each point
+        self.dx = self.x[1] - self.x[0]  # Grid spacing
+        self.source_strength = self.source_strength_thin_body()  # Compute the source strength
 
     def source_strength_thin_body(self): # For each part of the fuselage, the dr2/dx is calculated
         dr2_dx = np.zeros_like(self.x) # Empty array to store the source strength
         for i, xi in enumerate(self.x):
-            if xi <= self.nose_length:  # Nose section
-                term = (xi - self.nose_length) / self.nose_length
-                dr2_dx[i] = 2 * (self.fuselage_radius*np.sqrt(1-self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.nose_length)  # Compresibility effects are taken into account /  Prandtl-Glauert correction applied to adjust the source strength
-                #dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.tail_length)  # Incompressible
+            if self.Mach < 0.3: #Incompressible flow
+                if xi <= self.nose_length:  # Nose section
+                    term = (xi - self.nose_length) / self.nose_length
+                    dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.nose_length)
+                elif xi >= self.fuselage_length - self.tail_length:  # Tail section
+                    x_tail = xi - (self.fuselage_length - self.tail_length)
+                    term = x_tail / self.tail_length
+                    dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.tail_length)
+                else:
+                    dr2_dx[i] = 0.0 # Cylindrical section has no cross-section change, source strength is zero
 
-            elif xi >= self.fuselage_length - self.tail_length:  # Tail section
-                x_tail = xi - (self.fuselage_length - self.tail_length)
-                term = x_tail / self.tail_length
-                dr2_dx[i] = 2 * (self.fuselage_radius*np.sqrt(1-self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.tail_length)  # Compresibility effects are taken into account /  Prandtl-Glauert correction applied to adjust the source strength 
-                #dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.tail_length)  # Incompressible
 
-            else:
-                dr2_dx[i] = 0.0  # Cylindrical section has no cross-section change, source strength is zero
+            else: #Compressible
+                if xi <= self.nose_length:  # Nose section
+                    term = (xi - self.nose_length) / self.nose_length
+                    dr2_dx[i] = 2 * (self.fuselage_radius * np.sqrt(1 - self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.nose_length)
+                elif xi >= self.fuselage_length - self.tail_length:  # Tail section
+                    x_tail = xi - (self.fuselage_length - self.tail_length)
+                    term = x_tail / self.tail_length
+                    dr2_dx[i] = 2 * (self.fuselage_radius * np.sqrt(1 - self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.tail_length)
+                else:
+                    dr2_dx[i] = 0.0  # Cylindrical section has no cross-section change, source strength is zero
 
-        return self.free_stream_velocity * np.pi * dr2_dx  # Analytical computation of source strength with thin body assumption, comes from potential theory 
 
-    def velocity_components_around_fuselage(self, X, Y):
-        """Calculate 2D velocity field around fuselage"""
-        U = np.full(X.shape, self.free_stream_velocity) # The velocity in X direction/Due to source or sink presence. We need to take the freestream velocity into account
-        V = np.zeros(Y.shape) # The vertical velocity only depends on the source/sink strength, not the freestream velocity
-        
+        return self.free_stream_velocity * np.pi * dr2_dx # Analytical computation of source strength with thin body assumption, comes from potential theory 
+
+
+    def velocity_components_around_fuselage(self, X, Y, apply_mask=True):
+        """Calculate 2D velocity field around the fuselage (masking the fuselage body if desired)"""
+        U = np.full(X.shape, self.free_stream_velocity, dtype=np.float64)# The velocity in X direction/Due to source or sink presence. We need to take the freestream velocity into account
+        V = np.zeros(Y.shape, dtype=np.float64) # The vertical velocity only depends on the source/sink strength, not the freestream velocity
+
         for i in range(len(self.x)):
-            if self.source_strength[i] == 0: # There is no source strength in the cylindrical section
+            if self.source_strength[i] == 0:# There is no source strength in the cylindrical section
                 continue
-                
-            # Calculate distance from source to grid points
-            dx = X - self.x[i] # Source elements distributed along the fuselage
-            dy = Y   # Source elements are distributed along the fuselage centerline
-            r_sq = dx**2 + dy**2 + 1e-6  # I added small value to avoid division by zero
-            
-            # Add source contribution to velocity field
+             # Calculate distance from source to grid points
+            dx = X - self.x[i]  # Source elements distributed along the fuselage
+            dy = Y # Source elements are distributed along the fuselage centerline
+            r_sq = dx**2 + dy**2 + 1e-6 # I added small value to avoid division by zero
             U += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dx / r_sq)
             V += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dy / r_sq)
-             
-        for i in range(len(self.x)): # To prevent the flow from penetrating the fuselage
-            x_mask = (X >= self.x[i] - self.dx/2) & (X <= self.x[i] + self.dx/2)
-            y_mask = (Y >= -self.R[i]) & (Y <= self.R[i])
-            U[x_mask & y_mask] = np.nan
-            V[x_mask & y_mask] = np.nan
-            
-        return U, V 
+
+        if apply_mask:
+            epsilon = 1e-6
+            for i in range(len(self.x)):
+                x_mask = (X >= self.x[i] - self.dx/2) & (X <= self.x[i] + self.dx/2)
+                y_mask = (Y > -self.R[i] - epsilon) & (Y < self.R[i] + epsilon)
+                U[x_mask & y_mask] = np.nan
+                V[x_mask & y_mask] = np.nan
+
+        return U, V
 
     def plot_velocity_streamlines(self, canvas_frame):
-         
-        # Create grid
+        # Create grid for streamlines
         x = np.linspace(-10, self.fuselage_length + 10, 100)
         y = np.linspace(-10, 10, 100)
         X, Y = np.meshgrid(x, y)
@@ -354,13 +358,12 @@ class Flow_around_fuselage:
         # Calculate velocity components
         U, V = self.velocity_components_around_fuselage(X, Y)
 
-        # Create plot
         fig, ax = plt.subplots(figsize=(10, 6))
         strm = ax.streamplot(X, Y, U, V, color=np.sqrt(U**2 + V**2), 
-                            cmap='jet', linewidth=1, density=2, arrowsize=1)
+                             cmap='jet', linewidth=1, density=2, arrowsize=1)
         fig.colorbar(strm.lines, ax=ax, label='Velocity Magnitude (m/s)')
-        
-        # Plot fuselage outline
+
+        # Create plot
         ax.plot(self.x, self.y_upper, 'k', linewidth=2)
         ax.plot(self.x, self.y_lower, 'k', linewidth=2)
         ax.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
@@ -371,30 +374,51 @@ class Flow_around_fuselage:
         ax.set_aspect('equal')
         ax.grid(True)
 
-        # Embed in Tkinter
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
- 
-    def pressure_distribution(self): # After Mach 0.3, we need to consider the compressibility effects. The flow is no longer incompressible.
 
-        Cp_incompressible = np.zeros_like(self.x)
-        Cp_compressible=np.zeros_like(self.x)
+    def pressure_distribution(self):
+        # Compute pressure coefficients using the velocity along the fuselage surface
+        # For simplicity, we compute velocities at the upper surface (y = y_upper)
+        U, V = self.velocity_components_around_fuselage(self.x, self.y_upper, apply_mask=False)
+        velocity_magnitude = np.sqrt(U**2 + V**2)
+        Cp_incompressible = 1 - (velocity_magnitude / self.free_stream_velocity)**2
 
-        for i in range(len(self.x)):
-             
-            U, V = self.velocity_components_around_fuselage(self.x[i], 0)
-            if self.Mach > 0.3:
-                Cp_incompressible[i] = 1- ((np.sqrt(U**2+V**2))/self.free_stream_velocity)**2  
-                Cp_compressible[i] =Cp_incompressible[i]/np.sqrt(1-self.Mach**2)
-            else:
-                Cp_incompressible[i] = 1- ((np.sqrt(U**2+V**2))/self.free_stream_velocity)**2  
-                Cp_compressible[i] =Cp_incompressible[i]
+        if self.Mach > 0.3:
+            Cp_compressible = Cp_incompressible / np.sqrt(1 - self.Mach**2)
+        else:
+            Cp_compressible = Cp_incompressible
+            
+        return Cp_incompressible, Cp_compressible, Cp_compressible
 
-        return  Cp_incompressible , Cp_compressible
-    
+    def plot_pressure_distribution(self, canvas_frame):
+        Cp_incompressible, Cp_compressible, Cp = self.pressure_distribution()
 
+        fig, ax = plt.subplots(figsize=(12, 4))
+
+        # Plot pressure distributions
+        ax.plot(self.x, Cp_incompressible, label='Incompressible Cp', color='blue')
+        ax.plot(self.x, Cp_compressible, label='Compressible Cp', color='red')
+
+        # Plot fuselage geometry for reference
+        ax.plot(self.x, self.y_upper, 'k-', label='Fuselage Geometry')
+        ax.plot(self.x, self.y_lower, 'k')
+
+        ax.set_xlim(-5, self.fuselage_length + 5)
+        ax.set_ylim(-6, 6)
+
+        ax.set_xlabel('Axial Position [m]')
+        ax.set_ylabel('Pressure Coefficient (Cp) / Radius [m]')
+        ax.set_title('Pressure Coefficient Distribution and Fuselage Geometry')
+        ax.legend()
+        ax.grid(True)
+
+        canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(fill=tk.BOTH, expand=True)
+        canvas.draw()
 
 #---------------------------------------# 
 # Section 7 - Visualization of the Engine Model #
@@ -412,6 +436,7 @@ class NacelleVisualization:
         self.disk_radius = disk_radius
         self.exhaust_radius = exhaust_radius
 
+        # Additional geometric parameters
         self.extra_length = 2
         self.l_intake = 1.5
         self.l_engine = 2.5
@@ -419,8 +444,10 @@ class NacelleVisualization:
         self.disk_location = self.l_intake + 0.5
 
     def calculate_geometry(self):
+        # Create an array of x positions along the extended nacelle length.
         self.x = np.linspace(-self.extra_length, self.nac_length + self.extra_length, 700)
 
+        # Define the outer radius along the nacelle using piecewise functions.
         self.outer_radius = np.piecewise(
             self.x,
             [
@@ -441,6 +468,7 @@ class NacelleVisualization:
             ]
         )
 
+        # Define the velocities along the nacelle using piecewise functions.
         self.velocities = np.piecewise(
             self.x,
             [
@@ -460,10 +488,12 @@ class NacelleVisualization:
                 lambda x: self.v_exhaust
             ]
         )
-    
+
     def plot_velocity_field(self, canvas_frame):
+        # Calculate geometry data.
         self.calculate_geometry()
         
+        # Create a grid for plotting.
         x_grid = np.linspace(-5, self.nac_length + 5, 100)
         y_grid = np.linspace(-5, 5, 100)
         X, Y = np.meshgrid(x_grid, y_grid)
@@ -471,47 +501,61 @@ class NacelleVisualization:
         U = np.zeros_like(X)
         V = np.zeros_like(Y)
 
+        # For each grid point, assign a velocity value or mask if inside the nacelle.
         for i in range(len(x_grid)):
             for j in range(len(y_grid)):
                 x_p = X[j, i]
                 y_p = Y[j, i]
                 
+                # Determine the local nacelle radius.
                 if x_p < 0 or x_p > self.nac_length:
                     nacelle_radius_at_x = 0
                 else:
                     idx = np.argmin(np.abs(self.x - x_p))
                     nacelle_radius_at_x = self.outer_radius[idx]
                 
+                # Mask the region inside the nacelle.
                 if np.abs(y_p) <= nacelle_radius_at_x:
                     U[j, i] = np.nan
                     V[j, i] = np.nan
                     continue
                 
-                U[j, i] = self.v_inlet if x_p < self.l_intake else self.v_disk if x_p < self.l_intake + self.l_engine else self.v_exhaust
+                # Assign velocities based on x-position.
+                if x_p < self.l_intake:
+                    U[j, i] = self.v_inlet
+                elif x_p < self.l_intake + self.l_engine:
+                    U[j, i] = self.v_disk
+                else:
+                    U[j, i] = self.v_exhaust
                 V[j, i] = 0
-        
+
+        # Create the plot.
         fig, ax = plt.subplots(figsize=(10, 6))
-        ax.streamplot(X, Y, U, V, color=np.sqrt(U**2 + V**2), cmap='jet', density=1.5)
+        strm = ax.streamplot(X, Y, U, V, color=np.sqrt(U**2 + V**2), cmap='jet', density=1.5)
         ax.plot(self.x, self.outer_radius, 'k', linewidth=2)
         ax.plot(self.x, -self.outer_radius, 'k', linewidth=2)
         ax.set_xlabel("X (m)")
         ax.set_ylabel("Y (m)")
         ax.set_title("Velocity Field Around the Nacelle")
-        cbar = fig.colorbar(ax.streamplot(X, Y, U, V, color=np.sqrt(U**2 + V**2), cmap='jet', density=1.5)[0], ax=ax)
+        cbar = fig.colorbar(strm.lines, ax=ax)
         cbar.set_label("Velocity Magnitude (m/s)")
         ax.grid(True)
-        
+
+        # Clear previous contents of the canvas frame.
+        for widget in canvas_frame.winfo_children():
+            widget.destroy()
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
     def plot_geometry(self, canvas_frame):
+        # Calculate geometry data.
         self.calculate_geometry()
 
-        # Calculate the dynamic figure width and height based on nacelle length
+        # Dynamically set the figure dimensions.
         fig_width = max(8, self.nac_length / 2)
-        fig_height = fig_width / 4  # Maintain aspect ratio
+        fig_height = fig_width / 4
 
         fig, ax = plt.subplots(figsize=(fig_width, fig_height))
         cmap = plt.cm.plasma
@@ -519,12 +563,12 @@ class NacelleVisualization:
         sm = ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
 
-        # Plot nacelle geometry
+        # Plot the nacelle geometry.
         ax.fill_between(self.x, -self.outer_radius, self.outer_radius, color="lightgray", alpha=0.5, label="Nacelle Geometry")
         ax.plot(self.x, self.outer_radius, color="darkred", linewidth=2)
         ax.plot(self.x, -self.outer_radius, color="darkred", linewidth=2)
 
-        # Color segments based on velocity
+        # Color-code the geometry based on velocity.
         for i in range(len(self.x) - 1):
             ax.fill_between(
                 [self.x[i], self.x[i + 1]],
@@ -535,55 +579,57 @@ class NacelleVisualization:
                 alpha=0.7
             )
 
-        # Add fan and exhaust boundaries
+        # Add fan (disk) and exhaust boundaries.
         fan_x = self.disk_location
         ax.plot([fan_x, fan_x], [-self.disk_radius, self.disk_radius], color="black", linewidth=2, linestyle="--", label="Fan (Disk Location)")
         exhaust_start = self.l_intake + self.l_engine
         ax.plot([exhaust_start, exhaust_start], [-self.exhaust_radius, self.exhaust_radius], color="orange", linewidth=2, linestyle="--", label="Exhaust Boundary")
         ax.fill_between([exhaust_start, self.nac_length], [-self.exhaust_radius, -self.exhaust_radius], [self.exhaust_radius, self.exhaust_radius], color="orange", alpha=0.3, label="Exhaust Air")
 
-        # Add text labels
+        # Add text labels.
         ax.text(-self.extra_length / 2, self.inlet_radius, f"Inlet\nArea: {self.A_inlet:.2f} m²", color="black", fontsize=10, ha="center")
         ax.text(fan_x, self.disk_radius, f"Fan (Disk)\nArea: {self.A_disk:.2f} m²", color="black", fontsize=10, ha="center")
         ax.text((exhaust_start + self.nac_length) / 2, self.exhaust_radius, f"Exhaust\nArea: {self.A_exhaust:.2f} m²", color="black", fontsize=10, ha="center")
 
-        # Add a color bar for velocity
         cbar = fig.colorbar(sm, ax=ax, orientation='vertical')
         cbar.set_label('Velocity (m/s)', fontsize=12)
 
-        # Set labels and title
         ax.set_title("2D Engine Geometry with Velocity Representation", fontsize=16)
         ax.set_xlabel("Length (m)", fontsize=12)
         ax.set_ylabel("Radius (m)", fontsize=12)
         ax.legend()
         ax.grid()
 
-        # Resize the Tkinter canvas to match the dynamic plot size
+        
+        for widget in canvas_frame.winfo_children():
+            widget.destroy()
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.config(width=int(fig_width * 100), height=int(fig_height * 100))
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
-
-
+#---------------------------------------#
+# Section 8 - Main Application with Tkinter #
+#---------------------------------------#
+#---------------------------------------#
+# Section 8 - Main Application with Tkinter #
+#---------------------------------------#
 class NacelleApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Nacelle and Fuselage Visualization")
-
-        
-        self.root.state('zoomed') # Maximizing the window
+        self.root.state('zoomed')  # Maximize window
 
         self.FL = None
         self.Mach = None
         self.A_inlet = None
 
-        # Create a main frame to hold all content
+        # Main frame for content
         main_frame = tk.Frame(root, padx=10, pady=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Input and Output Frame (Left Side Bar)
+        # Input and Output Frame (Left Side)
         io_frame = tk.Frame(main_frame, padx=10, pady=10)
         io_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
 
@@ -609,15 +655,14 @@ class NacelleApp:
         # Output Frame
         output_frame = tk.LabelFrame(io_frame, text="Outputs", padx=10, pady=10)
         output_frame.pack(fill=tk.BOTH, expand=True)
-
         self.output_text = tk.Text(output_frame, wrap=tk.WORD, width=40, height=30)
         self.output_text.pack(fill=tk.BOTH, expand=True)
 
-        # Canvas for Nacelle Visualization (Main Window)
+        # Canvas for Nacelle Visualization (Center)
         self.canvas_frame = tk.LabelFrame(main_frame, text="Nacelle Visualization", padx=10, pady=10)
         self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Side frame for additional visualizations
+        # Side frame for additional visualizations (Right)
         side_frame = tk.Frame(main_frame, padx=10, pady=10)
         side_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -631,6 +676,10 @@ class NacelleApp:
 
         self.additional_frame2 = tk.LabelFrame(side_frame, text="Velocity Field", padx=10, pady=10)
         self.additional_frame2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # New Frame for Pressure Distribution
+        self.pressure_canvas_frame = tk.LabelFrame(side_frame, text="Pressure Distribution", padx=10, pady=10)
+        self.pressure_canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def visualize(self):
         self.output_text.delete("1.0", tk.END)
@@ -671,11 +720,11 @@ class NacelleApp:
 
         # Chapter 3: Basic Actuator Disk Model
         actuator_model = ActuatorDiskModel(rho, A_disk, v_inlet, v_disk)
-        mdot, T, P_disk, P_total, _ = actuator_model.display_results()
+        mdot, T_thrust, P_disk, P_total, _ = actuator_model.display_results()
 
         self.output_text.insert(tk.END, 'Chapter 3: Basic Actuator Disk Model\n')
         self.output_text.insert(tk.END, f"Mass flow rate (mdot): {mdot:.2f} kg/s\n")
-        self.output_text.insert(tk.END, f"Thrust (T): {T:.2f} N\n")
+        self.output_text.insert(tk.END, f"Thrust (T): {T_thrust:.2f} N\n")
         self.output_text.insert(tk.END, f"Power required at the disk (P_disk): {P_disk:.2f} kW\n")
         self.output_text.insert(tk.END, f"Total efficiency (ηTotal): {nacelle.ηTotal:.2f}\n")
         self.output_text.insert(tk.END, f"Total electrical power required (P_total): {P_total:.2f} kW\n")
@@ -683,10 +732,10 @@ class NacelleApp:
 
         # Chapter 4: Drag Generated by BLI Engine
         bli_engine = DragbyBLIEngine(flight_conditions, nacelle, self.FL, self.Mach)
-        Dzero = bli_engine.calculate_zero_lift_drag()
+        Dzero, Cdzero = bli_engine.calculate_zero_lift_drag()
 
         self.output_text.insert(tk.END, 'Chapter 4: Drag Generated by BLI Engine\n')
-        self.output_text.insert(tk.END, f"Zero Lift Drag (Dzero): {Dzero[0]:.2f} N\n")
+        self.output_text.insert(tk.END, f"Zero Lift Drag (Dzero): {Dzero:.2f} N\n")
         self.output_text.insert(tk.END, '---------------------------------------\n')
 
         # Chapter 5: Engine Mass Estimation
@@ -713,73 +762,49 @@ class NacelleApp:
         visualization.plot_geometry(self.canvas_frame)
 
         # Generate the Fuselage Geometry Plot
-        fuselage = Flow_around_fuselage(v_freestream,self.Mach)
+        fuselage = Flow_around_fuselage(v_freestream, self.Mach)
         self.plot_fuselage_geometry(fuselage)
 
         # Plot the 2D velocity field with streamlines
         fuselage.plot_velocity_streamlines(self.additional_frame2)
 
+        # Plot Pressure Distribution in the dedicated frame
+        fuselage.plot_pressure_distribution(self.pressure_canvas_frame)
+
     def plot_fuselage_geometry(self, fuselage):
-        # Calculate the dynamic figure width and height based on fuselage length
         fig_width = max(8, max(fuselage.x) / 2)
-        fig_height = fig_width / 4  # Maintain aspect ratio
+        fig_height = fig_width / 4
 
         fig, ax1 = plt.subplots(figsize=(fig_width, fig_height))
 
-        # Plot fuselage geometry
         ax1.plot(fuselage.x, fuselage.y_upper, 'b', label='Fuselage')
         ax1.plot(fuselage.x, fuselage.y_lower, 'b')
         ax1.fill_between(fuselage.x, fuselage.y_upper, fuselage.y_lower, color='lightblue', alpha=0.3)
-        
 
-        # Add labels and title
         ax1.set_xlabel('Axial Position [m]')
-        ax1.set_ylabel('Vertical Position [m]',fontsize=9, color='b')
+        ax1.set_ylabel('Vertical Position [m]', fontsize=9, color='b')
         ax1.set_title('Fuselage Geometry and Source Strength Along the Fuselage')
         ax1.grid(True)
-
-        # Set aspect ratio to make the plot appear slender
         ax1.set_aspect(aspect=0.3, adjustable='datalim')
 
-        # Create secondary axis for source strength
         ax2 = ax1.twinx()
         Q_analytical = fuselage.source_strength_thin_body()
         ax2.plot(fuselage.x, Q_analytical, 'r', label='Source Strength $Q(x)$')
-        ax2.set_ylabel('Source Strength $Q(x)$ [m²/s]', color='r', fontsize=9, labelpad=0)   
-       
+        ax2.set_ylabel('Source Strength $Q(x)$ [m²/s]', color='r', fontsize=9, labelpad=0)
 
-        # Dynamically calculate limits to align zero
         y1_abs_max = max(abs(min(fuselage.y_lower)), abs(max(fuselage.y_upper)))
         y2_abs_max = max(abs(min(Q_analytical)), abs(max(Q_analytical)))
         ax1.set_ylim(-y1_abs_max, y1_abs_max)
         ax2.set_ylim(-y2_abs_max, y2_abs_max)
 
-        # Add horizontal zero reference line
         ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
 
-        # Adjust layout and add legends
         ax1.legend(loc='upper left')
         ax2.legend(loc='upper right')
 
-        # Resize the Tkinter canvas to match the dynamic plot size
         canvas = FigureCanvasTkAgg(fig, master=self.fuselage_canvas_frame)
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.config(width=int(fig_width * 100), height=int(fig_height * 100))
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
-        canvas.draw()
-
-    def plot_velocity_field(self, fuselage, U_total):
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(fuselage.x, U_total, 'g', label='Velocity Field')
-        ax.set_xlabel('Axial Position [m]')
-        ax.set_ylabel('Velocity [m/s]')
-        ax.set_title('Velocity Field Along Fuselage')
-        ax.grid(True)
-        ax.legend()
-
-        # Resize the Tkinter canvas to match the dynamic plot size
-        canvas = FigureCanvasTkAgg(fig, master=self.additional_frame2)
-        canvas_widget = canvas.get_tk_widget()
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
