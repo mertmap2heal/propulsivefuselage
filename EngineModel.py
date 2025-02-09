@@ -2,11 +2,15 @@ import tkinter as tk
 from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import math
-from matplotlib.colors import Normalize
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 from matplotlib.cm import ScalarMappable
-from scipy.optimize import least_squares
+from matplotlib.colors import Normalize
+from scipy.integrate import solve_ivp
+import mplcursors
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+
 
 #---------------------------------------# 
 # Section 1 - Flight Conditions #
@@ -171,7 +175,7 @@ class DragbyBLIEngine:
         Snacwet = math.pi * 2 * self.inlet_radius * self.nac_length # Wetted Surface Area
         fnacparasite = cf * Fnac * Snacwet 
         Dzero = 0.5 * self.rho * self.v_freestream**2 * fnacparasite # Zero Lift Drag
-        return Dzero, Cdzero
+        return Dzero, Cdzero, mu
     
 #---------------------------------------# 
 # Section 5 - Mass Estimation of the Engine #
@@ -250,12 +254,11 @@ class EngineMassEstimation:
         m_Serv = self.calculate_service_mass(m_Shaft, m_Rot, m_Mag, m_Stator, m_Arm)
         return m_Shaft + m_Rot + m_Mag + m_Stator + m_Arm + m_Serv
     
-#---------------------------------------# 
-# Section 6- Potential Theory  
-#---------------------------------------# 
-
+#---------------------------------------#
+# Section 6 - Fuselage Flow Simulation #
+#---------------------------------------#
 class Flow_around_fuselage:
-    def __init__(self, v_freestream, Mach):
+    def __init__(self, v_freestream, Mach,rho, mu):
         # Airbus A320 parameters
         self.fuselage_length = 37.57  # meters
         self.fuselage_radius = 2.0  # meters / Average fuselage radius
@@ -264,15 +267,27 @@ class Flow_around_fuselage:
         self.free_stream_velocity = v_freestream  # Freestream velocity (m/s)
         self.Mach = Mach
 
-        N = 1500  # Number of points along the fuselage, can be adjusted for better resolution
-        self.x = np.linspace(0, self.fuselage_length, N)  # Divides the fuselage into N equally spaced points
+        # Constants for boundary layer simulation  
+        self.kappa = 0.41        # von Kármán constant (Eq. 17)
+        self.A_plus = 26         # Empirical turbulence constant (Eq. 17)
+        self.rho = rho        # Air density (kg/m³) / From FlightConditions class
+        self.mu = mu       # Dynamic viscosity (Pa·s) / From DragbyBLIEngine class
+        self.y_plus_target = 1   # First grid point at y+ = 1 (Section 3.2)
+        
+
+
+        # Grid setup
+        N = 1500  # Number of points along the fuselage
+        self.x = np.linspace(0, self.fuselage_length, N)
+        self.Re_x = self.rho * self.free_stream_velocity * self.x / self.mu
+
         self.y_upper = np.zeros(N)
         self.y_lower = np.zeros(N)
 
-        # Defining the fuselage geometry using analytical expressions
+        # Define fuselage geometry  
         for i, xi in enumerate(self.x):
             if xi <= self.nose_length:
-                # Nose section / # Nose section / The nose and tail sections of the equations can be tuned according to real life examples
+                # Nose section
                 y = self.fuselage_radius * (1 - ((xi - self.nose_length) / self.nose_length) ** 2)
                 self.y_upper[i] = y
                 self.y_lower[i] = -y
@@ -289,53 +304,82 @@ class Flow_around_fuselage:
 
         self.R = np.abs(self.y_upper)  # Fuselage radius at each point
         self.dx = self.x[1] - self.x[0]  # Grid spacing
-        self.source_strength = self.source_strength_thin_body()  # Compute the source strength
+        self.source_strength = self.source_strength_thin_body()
 
-    def source_strength_thin_body(self): # For each part of the fuselage, the dr2/dx is calculated
-        dr2_dx = np.zeros_like(self.x) # Empty array to store the source strength
+        # Boundary layer parameters (Section 3.2)
+        self.delta_99 = np.zeros_like(self.x)    # Boundary layer thickness (δ99)
+        self.delta_star = np.zeros_like(self.x)  # Displacement thickness (δ*)
+        self.theta = np.zeros_like(self.x)       # Momentum thickness (θ)
+        self.theta_star = np.zeros_like(self.x)  # Energy thickness (θ*)
+        self.tau_wall = np.zeros_like(self.x)    # Wall shear stress (τ0)
+        self.nu_t = np.zeros_like(self.x)        # Turbulent viscosity (ν_t)
+
+    def source_strength_thin_body(self):
+        dr2_dx = np.zeros_like(self.x)
         for i, xi in enumerate(self.x):
-            if self.Mach < 0.3: #Incompressible flow
-                if xi <= self.nose_length:  # Nose section
+            if self.Mach < 0.3:  # Incompressible flow
+                if xi <= self.nose_length:
                     term = (xi - self.nose_length) / self.nose_length
                     dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.nose_length)
-                elif xi >= self.fuselage_length - self.tail_length:  # Tail section
+                elif xi >= self.fuselage_length - self.tail_length:
                     x_tail = xi - (self.fuselage_length - self.tail_length)
                     term = x_tail / self.tail_length
                     dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.tail_length)
                 else:
-                    dr2_dx[i] = 0.0 # Cylindrical section has no cross-section change, source strength is zero
-
-
-            else: #Compressible
-                if xi <= self.nose_length:  # Nose section
+                    dr2_dx[i] = 0.0
+            else:  # Compressible flow
+                if xi <= self.nose_length:
                     term = (xi - self.nose_length) / self.nose_length
                     dr2_dx[i] = 2 * (self.fuselage_radius * np.sqrt(1 - self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.nose_length)
-                elif xi >= self.fuselage_length - self.tail_length:  # Tail section
+                elif xi >= self.fuselage_length - self.tail_length:
                     x_tail = xi - (self.fuselage_length - self.tail_length)
                     term = x_tail / self.tail_length
                     dr2_dx[i] = 2 * (self.fuselage_radius * np.sqrt(1 - self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.tail_length)
                 else:
-                    dr2_dx[i] = 0.0  # Cylindrical section has no cross-section change, source strength is zero
+                    dr2_dx[i] = 0.0
+        return self.free_stream_velocity * np.pi * dr2_dx
+    
+    def plot_fuselage_geometry(self, canvas_frame):
+        """
+        Create and embed a figure for the fuselage (source strength) plot.
+        """
+        # Create a figure for the fuselage (source strength) plot
+        fig, ax1 = plt.subplots(figsize=(12, 4))
+        
+        # Use self.x, self.y_upper, self.y_lower, etc., instead of self.fuselage.x
+        line_upper, = ax1.plot(self.x, self.y_upper, 'b', label='Fuselage Upper')
+        line_lower, = ax1.plot(self.x, self.y_lower, 'b')
+        ax1.fill_between(self.x, self.y_upper, self.y_lower, color='lightblue', alpha=0.3)
+        ax1.set_xlabel('Axial Position [m]')
+        ax1.set_ylabel('Vertical Position [m]', fontsize=9, color='b')
+        ax1.set_title('Source Strength Distribution')
+        ax1.grid(True)
 
+        ax2 = ax1.twinx()
+        line_source, = ax2.plot(self.x, self.source_strength, 'r', label='Source Strength Q(x)')
+        ax2.set_ylabel('Source Strength Q(x) [m²/s]', color='r', fontsize=9)
 
-        return self.free_stream_velocity * np.pi * dr2_dx # Analytical computation of source strength with thin body assumption, comes from potential theory 
+        ax1.legend(loc='lower left')
+        ax2.legend(loc='lower right')
+        fig.tight_layout()
 
+        # Embed the figure into the provided canvas_frame
+        canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(fill=tk.BOTH, expand=True)
+        canvas.draw()
 
     def velocity_components_around_fuselage(self, X, Y, apply_mask=True):
-        """Calculate 2D velocity field around the fuselage (masking the fuselage body if desired)"""
-        U = np.full(X.shape, self.free_stream_velocity, dtype=np.float64)# The velocity in X direction/Due to source or sink presence. We need to take the freestream velocity into account
-        V = np.zeros(Y.shape, dtype=np.float64) # The vertical velocity only depends on the source/sink strength, not the freestream velocity
-
+        U = np.full(X.shape, self.free_stream_velocity, dtype=np.float64)
+        V = np.zeros(Y.shape, dtype=np.float64)
         for i in range(len(self.x)):
-            if self.source_strength[i] == 0:# There is no source strength in the cylindrical section
+            if self.source_strength[i] == 0:
                 continue
-             # Calculate distance from source to grid points
-            dx = X - self.x[i]  # Source elements distributed along the fuselage
-            dy = Y # Source elements are distributed along the fuselage centerline
-            r_sq = dx**2 + dy**2 + 1e-6 # I added small value to avoid division by zero
+            dx = X - self.x[i]
+            dy = Y
+            r_sq = dx**2 + dy**2 + 1e-6
             U += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dx / r_sq)
             V += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dy / r_sq)
-
         if apply_mask:
             epsilon = 1e-6
             for i in range(len(self.x)):
@@ -343,89 +387,248 @@ class Flow_around_fuselage:
                 y_mask = (Y > -self.R[i] - epsilon) & (Y < self.R[i] + epsilon)
                 U[x_mask & y_mask] = np.nan
                 V[x_mask & y_mask] = np.nan
-
         return U, V
 
     def plot_velocity_streamlines(self, canvas_frame):
-        # Create grid for streamlines
+        # Clear previous widgets
+        for widget in canvas_frame.winfo_children():
+            widget.destroy()
+            
         x = np.linspace(-10, self.fuselage_length + 10, 100)
         y = np.linspace(-10, 10, 100)
         X, Y = np.meshgrid(x, y)
-
-        # Calculate velocity components
         U, V = self.velocity_components_around_fuselage(X, Y)
-
+        
+        # Replace NaN values with zero for plotting
+        U = np.nan_to_num(U, nan=0.0)
+        V = np.nan_to_num(V, nan=0.0)
+        
         fig, ax = plt.subplots(figsize=(10, 6))
         strm = ax.streamplot(X, Y, U, V, color=np.sqrt(U**2 + V**2), 
                              cmap='jet', linewidth=1, density=2, arrowsize=1)
         fig.colorbar(strm.lines, ax=ax, label='Velocity Magnitude (m/s)')
-
-        # Create plot
         ax.plot(self.x, self.y_upper, 'k', linewidth=2)
         ax.plot(self.x, self.y_lower, 'k', linewidth=2)
         ax.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
-        
         ax.set_xlabel('Axial Position [m]')
         ax.set_ylabel('Vertical Position [m]')
         ax.set_title('2D Velocity Field Around Fuselage')
         ax.set_aspect('equal')
         ax.grid(True)
 
+        #  interactive cursor to read data
+        cursor = mplcursors.cursor(strm.lines, hover=True)
+        cursor.connect("add", lambda sel: sel.annotation.set_text(f"x: {sel.target[0]:.2f}\ny: {sel.target[1]:.2f}"))
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
-
+        
     def pressure_distribution(self):
-        # Compute pressure coefficients using the velocity along the fuselage surface
-        # For simplicity, we compute velocities at the upper surface (y = y_upper)
         U, V = self.velocity_components_around_fuselage(self.x, self.y_upper, apply_mask=False)
         velocity_magnitude = np.sqrt(U**2 + V**2)
         Cp_incompressible = 1 - (velocity_magnitude / self.free_stream_velocity)**2
-
         if self.Mach > 0.3:
             Cp_compressible = Cp_incompressible / np.sqrt(1 - self.Mach**2)
         else:
             Cp_compressible = Cp_incompressible
-            
-        return Cp_incompressible, Cp_compressible, Cp_compressible
+        return Cp_incompressible, Cp_compressible
 
     def plot_pressure_distribution(self, canvas_frame):
-        # Clear previous widgets in the canvas_frame
+        # Clear previous widgets
         for widget in canvas_frame.winfo_children():
             widget.destroy()
-
-        Cp_incompressible, Cp_compressible, Cp = self.pressure_distribution()
-
-        fig, ax = plt.subplots(figsize=(12, 4))
-
-        # Plot pressure distributions
-        ax.plot(self.x, Cp_incompressible, label='Incompressible Cp', color='blue')
-        ax.plot(self.x, Cp_compressible, label='Compressible Cp', color='red')
-
-        # Plot fuselage geometry for reference
-        ax.plot(self.x, self.y_upper, 'k-', label='Fuselage Geometry')
-        ax.plot(self.x, self.y_lower, 'k')
-
-        ax.set_xlim(-5, self.fuselage_length + 5)
-        ax.set_ylim(-6, 6)
-
-        ax.set_xlabel('Axial Position [m]')
-        ax.set_ylabel('Pressure Coefficient (Cp)', fontsize=9)
-
-        ax.set_title('Pressure Coefficient Distribution and Fuselage Geometry')
-        ax.legend()
-        ax.grid(True)
-
+            
+        # Get pressure data
+        Cp_incompressible, Cp_compressible = self.pressure_distribution()  # Only 2 returns
+        
+        # Create figure and axes
+        fig, ax1 = plt.subplots(figsize=(12, 6))
+        
+        # Plot pressure coefficients on primary axis
+        line_incomp, = ax1.plot(self.x, Cp_incompressible, 'b', label='Incompressible Cp')
+        line_comp, = ax1.plot(self.x, Cp_compressible, 'r', label='Compressible Cp')
+        ax1.set_xlabel('Axial Position [m]')
+        ax1.set_ylabel('Pressure Coefficient (Cp)', color='b')
+        ax1.tick_params(axis='y', labelcolor='b')
+        ax1.grid(True)
+        
+        # Create secondary axis for fuselage geometry
+        ax2 = ax1.twinx()
+        line_upper, = ax2.plot(self.x, self.y_upper, 'k-', label='Fuselage Upper')
+        line_lower, = ax2.plot(self.x, self.y_lower, 'k-', label='Fuselage Lower')
+        ax2.set_ylabel('Vertical Position [m]', color='k')
+        ax2.tick_params(axis='y', labelcolor='k')
+        
+        # Combine legends
+        lines = [line_incomp, line_comp, line_upper]
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc='upper left')
+        
+        # Interactive cursor
+        def on_hover(sel):
+            x_val = sel.target[0]
+            idx = np.argmin(np.abs(self.x - x_val))
+            sel.annotation.set_text(
+                f"x: {x_val:.2f}m\n"
+                f"Incomp Cp: {Cp_incompressible[idx]:.2f}\n"
+                f"Comp Cp: {Cp_compressible[idx]:.2f}\n"
+                f"Fuselage Y: {self.y_upper[idx]:.2f}m"
+            )
+        
+        cursor = mplcursors.cursor([line_incomp, line_comp, line_upper], hover=True)
+        cursor.connect("add", on_hover)
+        
+        # Embed plot
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+    def compute_pressure_gradient(self):
+        _, Cp_compressible = self.pressure_distribution()
+        q = 0.5 * self.rho * self.free_stream_velocity**2  # Dynamic pressure
+        dCp_dx = np.gradient(Cp_compressible, self.x)
+        dp_dx = -q * dCp_dx
+        return dp_dx
+
+    def solve_boundary_layer(self):
+        dp_dx = self.compute_pressure_gradient()
+        nu = self.mu / self.rho
+
+        # Initial conditions (laminar flat plate)
+        x_initial = 0.01
+        Re_x_initial = self.rho * self.free_stream_velocity * x_initial / self.mu
+        
+        if Re_x_initial < 5e5:  # Laminar - Blasius solution
+            theta_initial = 0.664 * np.sqrt(nu * x_initial / self.free_stream_velocity)
+            delta_99_initial = 5.0 * x_initial / np.sqrt(Re_x_initial)
+        else:  # Turbulent - Prandtls 1/7th power law
+            theta_initial = 0.016 * x_initial / (Re_x_initial ** (1/7))
+            delta_99_initial = 0.16 * x_initial / (Re_x_initial ** (1/7))
+
+        # Solve ODE system
+        sol = solve_ivp(
+            self._boundary_layer_ode_system,
+            [x_initial, self.x[-1]],
+            [delta_99_initial, theta_initial],
+            args=(dp_dx,),
+            t_eval=self.x[self.x >= x_initial],
+            method='LSODA'
+        )
+        
+        self.delta_99 = np.interp(self.x, sol.t, sol.y[0])
+        self.theta = np.interp(self.x, sol.t, sol.y[1])
+        self.delta_star = self._compute_displacement_thickness()
+        self.tau_wall = self._compute_wall_shear_stress()
+
+    
+    def compute_skin_friction(self, i):
+        Re_x = self.Re_x[i]
+        if Re_x < 5e5:  # Laminar (from https://fluidmech.onlineflowcalculator.com/White/Chapter7)
+            Cf = 0.664 / np.sqrt(Re_x + 1e-10)  
+        else:  # Turbulent (from https://fluidmech.onlineflowcalculator.com/White/Chapter7)
+            Cf = 0.027 / (Re_x ** (1/7))   
+        return Cf
+
+
+    def _boundary_layer_ode_system(self, x, y, dp_dx):
+        theta, delta_99 = y
+        U_e = self.free_stream_velocity
+        current_dp_dx = np.interp(x, self.x, dp_dx)
+        
+        # Geometry parameters
+        i = np.searchsorted(self.x, x)
+        R = self.R[i]
+        dR_dx = (self.R[i+1] - self.R[i-1])/(self.x[i+1] - self.x[i-1]) if 0 < i < len(self.x)-1 else 0.0
+        
+        # Flow regime parameters
+        Re_x = self.rho * U_e * x / self.mu
+        Cf = self.compute_skin_friction(i)
+        H = 2.59 if Re_x < 5e5 else 1.29
+        
+        # Momentum thickness equation (axisymmetric)
+        dtheta_dx = (Cf/2) + (theta/(self.rho * U_e**2))*(H + 2)*current_dp_dx - (theta/R)*dR_dx
+        
+        if Re_x < 5e5:  # Laminar
+            delta_theta_ratio = 5.0 / 0.664  # Blasius ratio (from https://fluidmech.onlineflowcalculator.com/White/Chapter7)
+        else:  # Turbulent
+            delta_theta_ratio = 0.16 / 0.016  # Prandtl ratio (from https://fluidmech.onlineflowcalculator.com/White/Chapter7)
+        
+        ddelta99_dx = delta_theta_ratio * dtheta_dx - (delta_99/R)*dR_dx 
+        
+        return [dtheta_dx, ddelta99_dx]
+    
+    def _compute_displacement_thickness(self):
+        H = np.where(self.Re_x < 5e5, 2.59, 1.29)
+        return H * self.theta
+
+    def _compute_wall_shear_stress(self):
+        tau_wall = np.zeros_like(self.x)
+
+        for i in range(len(self.x)):  # Use index `i` instead of `x`
+            Cf = self.compute_skin_friction(i)
+            tau_wall[i] = Cf * 0.5 * self.rho * self.free_stream_velocity**2  #  https://youtu.be/x_VhWhmJqrI  
+        return tau_wall
+
+
+    def plot_boundary_layer_thickness(self, canvas_frame):
+        # Clear previous widgets
+        for widget in canvas_frame.winfo_children():
+            widget.destroy()
+        
+        fig, ax = plt.subplots(figsize=(12, 4))
+        
+        # Compute surface-normal delta
+        dy_dx = np.gradient(self.y_upper, self.x)
+        theta = np.arctan(dy_dx)
+        delta_normal = self.delta_99 * np.cos(theta)
+        
+        # Plot fuselage and boundary layer
+        ax.plot(self.x, self.y_upper, 'k', linewidth=2, label='Fuselage')
+        ax.fill_between(self.x, self.y_upper + delta_normal, self.y_upper, 
+                        color='red', alpha=0.3, label='δ99 (Normal to Surface)')
+        
+        # Add secondary axis for thickness magnitude
+        ax2 = ax.twinx()
+        line_delta = ax2.plot(self.x, self.delta_99, 'b--', label='δ99')[0]
+        
+        # Add transition marker
+        transition_idx = np.where(self.Re_x >= 5e5)[0][0]
+        ax.axvline(self.x[transition_idx], color='gray', linestyle='--', 
+                label=f'Transition (x={self.x[transition_idx]:.1f}m)')
+        
+        # Formatting
+        ax.set_xlabel('Axial Position [m]')
+        ax.set_ylabel('Vertical Position [m]')
+        ax2.set_ylabel('Boundary Layer Thickness [m]', color='b')
+        ax.set_title('Boundary Layer Development')
+        
+        # Interactive hover
+        def on_hover(sel):
+            x_val = sel.target[0]
+            idx = np.argmin(np.abs(self.x - x_val))
+            sel.annotation.set_text(
+                f"x: {x_val:.2f}m\n"
+                f"δ99: {self.delta_99[idx]:.3f}m\n"
+                f"Re_x: {self.Re_x[idx]:.1e}"
+            )
+        
+        cursor = mplcursors.cursor(line_delta, hover=True)
+        cursor.connect("add", on_hover)
+        
+        # Embed plot
+        canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+
+
 #---------------------------------------# 
 # Section 7 - Visualization of the Engine Model #
 #---------------------------------------# 
+ 
 class EngineVisualization:
-    def __init__(self, A_inlet, A_disk, A_exhaust, v_inlet, v_disk, v_exhaust, nac_length, inlet_radius, disk_radius, exhaust_radius):
+    def __init__(self, A_inlet, A_disk, A_exhaust, v_inlet, v_disk, v_exhaust, nac_length, inlet_radius, disk_radius, exhaust_radius, app=None):
         self.A_inlet = A_inlet
         self.A_disk = A_disk
         self.A_exhaust = A_exhaust
@@ -436,6 +639,7 @@ class EngineVisualization:
         self.inlet_radius = inlet_radius
         self.disk_radius = disk_radius
         self.exhaust_radius = exhaust_radius
+        self.app = app  # Reference to the main app
 
         # Additional geometric parameters
         self.extra_length = 2
@@ -491,18 +695,14 @@ class EngineVisualization:
         )
 
     def plot_velocity_field(self, canvas_frame):
-        # Calculate geometry data.
         self.calculate_geometry()
-        
-        # Create a grid for plotting.
         x_grid = np.linspace(-5, self.nac_length + 5, 100)
         y_grid = np.linspace(-5, 5, 100)
         X, Y = np.meshgrid(x_grid, y_grid)
-
         U = np.zeros_like(X)
         V = np.zeros_like(Y)
 
-        # For each grid point, assign a velocity value or mask if inside the nacelle.
+        # Populate U and V (existing code)
         for i in range(len(x_grid)):
             for j in range(len(y_grid)):
                 x_p = X[j, i]
@@ -529,8 +729,12 @@ class EngineVisualization:
                 else:
                     U[j, i] = self.v_exhaust
                 V[j, i] = 0
-
-        # Create the plot.
+ 
+        self.x_grid = x_grid
+        self.y_grid = y_grid
+        self.U_velocity = U
+        self.V_velocity = V
+        
         fig, ax = plt.subplots(figsize=(10, 6))
         strm = ax.streamplot(X, Y, U, V, color=np.sqrt(U**2 + V**2), cmap='jet', density=1.5)
         ax.plot(self.x, self.outer_radius, 'k', linewidth=2)
@@ -555,8 +759,8 @@ class EngineVisualization:
         self.calculate_geometry()
 
         # Dynamically set the figure dimensions.
-        fig_width = max(8, self.nac_length / 2)
-        fig_height = fig_width / 4
+        fig_width = max(16, self.nac_length / 2)
+        fig_height = fig_width / 6
 
         fig, ax = plt.subplots(figsize=(fig_width, fig_height))
         cmap = plt.cm.plasma
@@ -609,30 +813,42 @@ class EngineVisualization:
         canvas_widget.config(width=int(fig_width * 100), height=int(fig_height * 100))
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
-
-
-# Section 8 - Main Application with Tkinter #
-#---------------------------------------#
+ 
+ 
 class BoundaryLayerIngestion:
     def __init__(self, root):
         self.root = root
-        self.root.title("Boundary Layer Ingestion Concept Data Screen")
-        self.root.state('zoomed')  # Maximize window
+        self._configure_root()
+        self._initialize_variables()
+        self._create_main_frame()
+        self._create_io_section()
+        self._create_notebook()
 
+    # === GUI Setup Methods ===
+    def _configure_root(self):
+        self.root.title("Boundary Layer Ingestion Concept Data Screen")
+        self.root.state('zoomed')
+
+    def _initialize_variables(self):
         self.FL = None
         self.Mach = None
         self.A_inlet = None
+        self.selected_data = {'x': None, 'y': None}
 
-        # Main frame for content
-        main_frame = tk.Frame(root, padx=10, pady=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+    def _create_main_frame(self):
+        self.main_frame = tk.Frame(self.root, padx=10, pady=10)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Input and Output Frame (Left Side)
-        io_frame = tk.Frame(main_frame, padx=10, pady=10)
-        io_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+    def _create_io_section(self):
+        # Left-side input/output section
+        self.io_frame = tk.Frame(self.main_frame, padx=10, pady=10)
+        self.io_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+        self._create_input_frame()
+        self._create_output_frame()
+        self._create_cursor_label()
 
-        # Input Frame (unchanged)
-        input_frame = tk.LabelFrame(io_frame, text="Inputs", padx=10, pady=10)
+    def _create_input_frame(self):
+        input_frame = tk.LabelFrame(self.io_frame, text="Inputs", padx=10, pady=10)
         input_frame.pack(fill=tk.X, pady=5)
 
         tk.Label(input_frame, text="Enter the Flight Height (Feet):").pack(anchor='w')
@@ -650,51 +866,99 @@ class BoundaryLayerIngestion:
         submit_btn = tk.Button(input_frame, text="Visualize", command=self.visualize)
         submit_btn.pack(pady=10)
 
-        # Output Frame (unchanged)
-        output_frame = tk.LabelFrame(io_frame, text="Outputs", padx=10, pady=10)
+    def _create_output_frame(self):
+        output_frame = tk.LabelFrame(self.io_frame, text="Outputs", padx=10, pady=10)
         output_frame.pack(fill=tk.BOTH, expand=True)
         self.output_text = tk.Text(output_frame, wrap=tk.WORD, width=40, height=30)
         self.output_text.pack(fill=tk.BOTH, expand=True)
 
-        # Canvas for Nacelle Visualization (Center - unchanged)
-        self.canvas_frame = tk.LabelFrame(main_frame, text="2D Engine Visualization", padx=10, pady=10)
-        self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+    def _create_cursor_label(self):
+        self.cursor_label = tk.Label(self.io_frame, text="Cursor Data: x=None, y=None", font=("Arial", 10))
+        self.cursor_label.pack(pady=5)
 
-        #---------------------------------------------
-        # Modified Right Side Layout (Grid System)
-        #---------------------------------------------
-        side_frame = tk.Frame(main_frame)
-        side_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+    def _create_notebook(self):
+        # Create notebook tabs for different plots
+        self.notebook = ttk.Notebook(self.main_frame)
+        self.notebook.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Configure grid layout
-        side_frame.grid_rowconfigure(0, weight=1)  # Pressure
-        side_frame.grid_rowconfigure(1, weight=1)  # Fuselage
-        side_frame.grid_rowconfigure(3, weight=1)  # Velocity
-        side_frame.grid_columnconfigure(0, weight=1)
+        self.engine_tab = tk.Frame(self.notebook)
+        self.velocity_tab = tk.Frame(self.notebook)
+        self.fuselage_tab = tk.Frame(self.notebook)
+        self.pressure_tab = tk.Frame(self.notebook)
+        self.boundary_layer_tab = tk.Frame(self.notebook)
 
-        # Pressure Distribution (Top)
-        self.pressure_canvas_frame = tk.LabelFrame(side_frame, text="Pressure Constant Distribution Along the Fuselage ", padx=10, pady=10)
-        self.pressure_canvas_frame.grid(row=0, column=0, sticky='nsew', padx=5, pady=2)
+        self.notebook.add(self.engine_tab, text="Engine Geometry")
+        self.notebook.add(self.velocity_tab, text="Velocity Field")
+        self.notebook.add(self.fuselage_tab, text="Source Strength Geometry")
+        self.notebook.add(self.pressure_tab, text="Pressure Distribution")
+        self.notebook.add(self.boundary_layer_tab, text="Boundary Layer")
 
-        # Fuselage Geometry
-        self.fuselage_canvas_frame = tk.LabelFrame(side_frame, text="Source Strength Along the Fuselage", padx=10, pady=10)
-        self.fuselage_canvas_frame.grid(row=1, column=0, sticky='nsew', padx=5, pady=2)
+    # === Utility Methods ===
+    def update_cursor_data(self, x, y):
+        """Update the cursor label with the current x and y values."""
+        self.selected_data['x'] = x
+        self.selected_data['y'] = y
+        self.cursor_label.config(text=f"Cursor Data: x={x:.2f}, y={y:.2f}")
 
- 
-        # Velocity Field (Bottom)
-        self.additional_frame2 = tk.LabelFrame(side_frame, text="Velocity Field Along the Fuselage", padx=10, pady=10)
-        self.additional_frame2.grid(row=3, column=0, sticky='nsew', padx=5, pady=2)
+    def _embed_figure_in_tab(self, fig, tab, cursor_artists=None):
+        """Clear the given tab and embed the matplotlib figure into it.
         
+        If a list of artists is provided (for example, lines), then set up mplcursors
+        to display interactive data.
+        """
+        # Clear the tab first
+        for widget in tab.winfo_children():
+            widget.destroy()
+
+        # Create and pack the canvas
+        canvas = FigureCanvasTkAgg(fig, master=tab)
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(fill=tk.BOTH, expand=True)
+
+        # Add the navigation toolbar
+        toolbar = NavigationToolbar2Tk(canvas, tab)
+        toolbar.update()
+        canvas._tkcanvas.pack(fill=tk.BOTH, expand=True)
+
+        # If interactive cursors are needed
+        if cursor_artists:
+            cursor = mplcursors.cursor(cursor_artists, hover=True)
+            @cursor.connect("add")
+            def on_hover(sel):
+                x, y = sel.target
+                self.update_cursor_data(x, y)
+                sel.annotation.set_text(f"x: {x:.2f}\ny: {y:.2f}")
+
+        canvas.draw()
+
+    # === Main Functionality ===
     def visualize(self):
+        # Clear the previous output
         self.output_text.delete("1.0", tk.END)
+        self._read_inputs()
+
+        # Process the different chapters of the analysis
+        flight_conditions, T, p, rho, v_inlet, v_freestream = self._process_flight_conditions()
+        self.nacelle, results_nacelle, A_disk, v_disk, v_exhaust = self._process_nacelle_geometry(rho, p, v_inlet)
+        mdot, T_thrust, P_disk, P_total, _ = self._process_actuator_disk_model(rho, A_disk, v_inlet, v_disk)
+        Dzero, Cdzero, mu = self._process_drag_bli_engine(flight_conditions, self.nacelle)
+        total_motor_mass = self._process_engine_mass_estimation(v_inlet, rho, p, self.nacelle)
+
+        # Plot all visualizations in their respective tabs
+        self._plot_visualizations(results_nacelle, v_inlet, v_disk, v_exhaust, v_freestream, rho, mu)
+
+    def _read_inputs(self):
+        """Read and convert input values from the entry widgets."""
         self.FL = float(self.fl_entry.get())
         self.Mach = float(self.mach_entry.get())
         self.A_inlet = float(self.area_entry.get())
 
+    # === Processing Methods (Chapters) ===
+    def _process_flight_conditions(self):
         flight_conditions = FlightConditions()
         T, p, rho = flight_conditions.calculate_atmospheric_properties(self.FL)
         v_inlet, v_freestream = flight_conditions.calculate_free_stream_velocity(self.Mach, self.FL)
-        
+
         self.output_text.insert(tk.END, 'Chapter 1: Flight Conditions\n')
         self.output_text.insert(tk.END, f"Temperature: {T:.2f} K\n")
         self.output_text.insert(tk.END, f"Pressure: {p:.2f} Pa\n")
@@ -702,7 +966,9 @@ class BoundaryLayerIngestion:
         self.output_text.insert(tk.END, f"Free-stream velocity: {v_freestream:.2f} m/s\n")
         self.output_text.insert(tk.END, '-----------------------------\n')
 
-        # Chapter 2: Nacelle Geometry
+        return flight_conditions, T, p, rho, v_inlet, v_freestream
+
+    def _process_nacelle_geometry(self, rho, p, v_inlet):
         nacelle = NacelleParameters(v_inlet, self.A_inlet)
         results_nacelle = nacelle.variable_parameters(rho, p)
         A_disk = results_nacelle[1]
@@ -722,7 +988,9 @@ class BoundaryLayerIngestion:
         self.output_text.insert(tk.END, f"Pressure Ratio: {results_nacelle[9]:.2f}\n")
         self.output_text.insert(tk.END, '--------------------------------\n')
 
-        # Chapter 3: Basic Actuator Disk Model
+        return nacelle, results_nacelle, A_disk, v_disk, v_exhaust
+
+    def _process_actuator_disk_model(self, rho, A_disk, v_inlet, v_disk):
         actuator_model = ActuatorDiskModel(rho, A_disk, v_inlet, v_disk)
         mdot, T_thrust, P_disk, P_total, _ = actuator_model.display_results()
 
@@ -730,19 +998,23 @@ class BoundaryLayerIngestion:
         self.output_text.insert(tk.END, f"Mass flow rate (mdot): {mdot:.2f} kg/s\n")
         self.output_text.insert(tk.END, f"Thrust (T): {T_thrust:.2f} N\n")
         self.output_text.insert(tk.END, f"Power required at the disk (P_disk): {P_disk:.2f} kW\n")
-        self.output_text.insert(tk.END, f"Total efficiency (ηTotal): {nacelle.ηTotal:.2f}\n")
+        self.output_text.insert(tk.END, f"Total efficiency (ηTotal): {self.nacelle.ηTotal:.2f}\n")
         self.output_text.insert(tk.END, f"Total electrical power required (P_total): {P_total:.2f} kW\n")
         self.output_text.insert(tk.END, '--------------------------------------\n')
 
-        # Chapter 4: Drag Generated by BLI Engine
+        return mdot, T_thrust, P_disk, P_total, None
+
+    def _process_drag_bli_engine(self, flight_conditions, nacelle):
         bli_engine = DragbyBLIEngine(flight_conditions, nacelle, self.FL, self.Mach)
-        Dzero, Cdzero = bli_engine.calculate_zero_lift_drag()
+        Dzero, Cdzero, mu = bli_engine.calculate_zero_lift_drag()
 
         self.output_text.insert(tk.END, 'Chapter 4: Drag Generated by BLI Engine\n')
         self.output_text.insert(tk.END, f"Zero Lift Drag (Dzero): {Dzero:.2f} N\n")
         self.output_text.insert(tk.END, '---------------------------------------\n')
 
-        # Chapter 5: Engine Mass Estimation
+        return Dzero, Cdzero, mu
+
+    def _process_engine_mass_estimation(self, v_inlet, rho, p, nacelle):
         engine_mass = EngineMassEstimation(v_inlet, self.A_inlet, rho, p, nacelle.nac_length)
         total_motor_mass = engine_mass.calculate_total_motor_mass()
 
@@ -750,68 +1022,75 @@ class BoundaryLayerIngestion:
         self.output_text.insert(tk.END, f"Total Motor Mass: {total_motor_mass:.2f} kg\n")
         self.output_text.insert(tk.END, '--------------------------------------\n')
 
-        # Generate the Nacelle Visualization Plot
+        return total_motor_mass
+
+    # === Plotting Methods ===
+    def _plot_visualizations(self, results_nacelle, v_inlet, v_disk, v_exhaust, v_freestream, rho, mu):
+        # Plot Engine Geometry
+        self._plot_engine_geometry(results_nacelle, v_inlet, v_disk, v_exhaust)
+        # Create a fuselage object (for velocity, pressure, etc.)
+        self.fuselage = Flow_around_fuselage(v_freestream, self.Mach, rho, mu)
+        self.fuselage.solve_boundary_layer()
+        # Plot Fuselage Geometry (Source Strength)
+        self._plot_source_field()
+
+        # Plot Velocity Field
+        self._plot_velocity_field()
+        # Plot Pressure Distribution
+        self._plot_pressure_distribution()
+        # Plot Boundary Layer Thickness
+        self._plot_boundary_layer_thickness()
+
+    def _plot_engine_geometry(self, results_nacelle, v_inlet, v_disk, v_exhaust):
         visualization = EngineVisualization(
-            A_inlet=nacelle.A_inlet,
-            A_disk=A_disk,
+            A_inlet=self.nacelle.A_inlet,
+            A_disk=results_nacelle[1],
             A_exhaust=results_nacelle[2],
             v_inlet=v_inlet,
             v_disk=v_disk,
             v_exhaust=v_exhaust,
-            nac_length=nacelle.nac_length,
+            nac_length=self.nacelle.nac_length,
             inlet_radius=results_nacelle[3],
             disk_radius=results_nacelle[8],
             exhaust_radius=results_nacelle[4]
         )
-        visualization.plot_geometry(self.canvas_frame)
+        # If the EngineVisualization class can return a figure (e.g. via get_geometry_figure),
+        # then we embed it using our helper. Otherwise, fall back to its original method.
+        if hasattr(visualization, 'get_geometry_figure'):
+            fig = visualization.get_geometry_figure()
+            self._embed_figure_in_tab(fig, self.engine_tab)
+        else:
+            visualization.plot_geometry(self.engine_tab)
+            
+    def _plot_source_field(self):
+        self.fuselage.plot_fuselage_geometry(self.fuselage_tab)
 
-        # Generate the Fuselage Geometry Plot
-        fuselage = Flow_around_fuselage(v_freestream, self.Mach)
-        self.plot_fuselage_geometry(fuselage)
 
-        # Plot the 2D velocity field with streamlines
-        fuselage.plot_velocity_streamlines(self.additional_frame2)
+    
+    def _plot_velocity_field(self):
+        # If your fuselage object has a method to return a figure for velocity, use it
+        if hasattr(self.fuselage, 'get_velocity_figure'):
+            fig = self.fuselage.get_velocity_figure()
+            self._embed_figure_in_tab(fig, self.velocity_tab)
+        else:
+            # Otherwise, use the existing method to plot directly into the tab
+            self.fuselage.plot_velocity_streamlines(self.velocity_tab)
 
-        # Plot Pressure Distribution in the dedicated frame (already in your code)
-        fuselage.plot_pressure_distribution(self.pressure_canvas_frame)
+    def _plot_pressure_distribution(self):
+        if hasattr(self.fuselage, 'get_pressure_figure'):
+            fig = self.fuselage.get_pressure_figure()
+            self._embed_figure_in_tab(fig, self.pressure_tab)
+        else:
+            self.fuselage.plot_pressure_distribution(self.pressure_tab)
 
-    def plot_fuselage_geometry(self, fuselage):
-        fig_width = max(8, max(fuselage.x) / 2)
-        fig_height = fig_width / 4
+    def _plot_boundary_layer_thickness(self):
+        if hasattr(self.fuselage, 'get_boundary_layer_figure'):
+            fig = self.fuselage.get_boundary_layer_figure()
+            self._embed_figure_in_tab(fig, self.boundary_layer_tab)
+        else:
+            self.fuselage.plot_boundary_layer_thickness(self.boundary_layer_tab)
 
-        fig, ax1 = plt.subplots(figsize=(fig_width, fig_height))
-
-        ax1.plot(fuselage.x, fuselage.y_upper, 'b', label='Fuselage')
-        ax1.plot(fuselage.x, fuselage.y_lower, 'b')
-        ax1.fill_between(fuselage.x, fuselage.y_upper, fuselage.y_lower, color='lightblue', alpha=0.3)
-
-        ax1.set_xlabel('Axial Position [m]')
-        ax1.set_ylabel('Vertical Position [m]', fontsize=9, color='b')
-        ax1.set_title('Fuselage Geometry and Source Strength Along the Fuselage')
-        ax1.grid(True)
-        ax1.set_aspect(aspect=0.3, adjustable='datalim')
-
-        ax2 = ax1.twinx()
-        Q_analytical = fuselage.source_strength_thin_body()
-        ax2.plot(fuselage.x, Q_analytical, 'r', label='Source Strength $Q(x)$')
-        ax2.set_ylabel('Source Strength $Q(x)$ [m²/s]', color='r', fontsize=9, labelpad=0)
-
-        y1_abs_max = max(abs(min(fuselage.y_lower)), abs(max(fuselage.y_upper)))
-        y2_abs_max = max(abs(min(Q_analytical)), abs(max(Q_analytical)))
-        ax1.set_ylim(-y1_abs_max, y1_abs_max)
-        ax2.set_ylim(-y2_abs_max, y2_abs_max)
-
-        ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
-
-        ax1.legend(loc='lower left')
-        ax2.legend(loc='lower right')
-
-        canvas = FigureCanvasTkAgg(fig, master=self.fuselage_canvas_frame)
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.config(width=int(fig_width * 100), height=int(fig_height * 100))
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
-        canvas.draw()
-
+# === Main Program ===
 if __name__ == "__main__":
     root = tk.Tk()
     app = BoundaryLayerIngestion(root)
