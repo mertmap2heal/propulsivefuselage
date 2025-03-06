@@ -85,30 +85,30 @@ class FlightConditions:
 #---------------------------------------# 
 class NacelleParameters:
     def __init__(self, v_inlet, A_inlet):
-        self.A_inlet = A_inlet  # Engine Inlet Area (m²)
-        self.v_inlet = v_inlet  # Inlet Velocity (m/s)
-        self.ηdisk = 0.95  # Disk Efficiency
-        self.ηmotor = 0.95  # Motor Efficiency
-        self.ηprop = 0.97  # Propeller Efficiency
+        self.A_inlet = A_inlet
+        self.v_inlet = v_inlet
+        self.ηdisk = 0.95
+        self.ηmotor = 0.95
+        self.ηprop = 0.97
         self.ηTotal = self.ηmotor * self.ηprop * self.ηdisk
-        self.nac_length = 2.8  # Nacelle Length (m)
+        self.nac_length = 2.8
+        self.v_disk = None  
 
     def variable_parameters(self, rho, p):
-        A_disk = self.A_inlet * 0.9  # Disk Area (m²)
-        Inlet_radius = math.sqrt(self.A_inlet / math.pi)  # Inlet Radius (m)
-        Disk_radius = math.sqrt(A_disk / math.pi)  # Disk Radius (m)
-        v_disk = (self.A_inlet * self.v_inlet) / A_disk  # Disk Velocity (m/s)
-        v_exhaust = 2 * v_disk - self.v_inlet  # Exhaust Velocity (m/s)
-        A_exhaust = A_disk * (v_disk / v_exhaust)  # Exhaust Area (m²)
-        Exhaust_radius = math.sqrt(A_exhaust / math.pi)  # Exhaust Radius (m)
-        
-        delta_p =  0.5 * rho * (v_exhaust**2 - self.v_inlet**2)  
+        A_disk = self.A_inlet * 0.9
+        Inlet_radius = math.sqrt(self.A_inlet / math.pi)
+        Disk_radius = math.sqrt(A_disk / math.pi)
+        self.v_disk = (self.A_inlet * self.v_inlet) / A_disk   
+        v_exhaust = 2 * self.v_disk - self.v_inlet
+        A_exhaust = A_disk * (self.v_disk / v_exhaust)
+        Exhaust_radius = math.sqrt(A_exhaust / math.pi)
+        delta_p = 0.5 * rho * (v_exhaust**2 - self.v_inlet**2)
         P2 = p + delta_p
-        Pressure_ratio = (P2 + 0.5 * rho * v_exhaust**2) / (p + 0.5 * rho * self.v_inlet**2)  # Pressure Ratio
+        Pressure_ratio = (P2 + 0.5 * rho * v_exhaust**2) / (p + 0.5 * rho * self.v_inlet**2)
 
         return (
             self.A_inlet, A_disk, A_exhaust, Inlet_radius, Exhaust_radius,
-            v_disk, v_exhaust, self.v_inlet, Disk_radius, Pressure_ratio, delta_p, p  
+            self.v_disk, v_exhaust, self.v_inlet, Disk_radius, Pressure_ratio, delta_p, p  
         )
 #---------------------------------------# 
 # Section 4 - Drag Generation by BLI Engine #
@@ -221,18 +221,18 @@ class EngineMassEstimation:
 #---------------------------------------#
  
 class Flow_around_fuselage:
-    def __init__(self, v_freestream, Mach, rho, mu, delta_p, A_inlet,p,
+    def __init__(self, v_freestream, Mach, rho, mu, delta_p, A_inlet, p,
                 propulsor_position=33.0, 
                 disk_radius=2.2, eta_disk=0.95, 
-                eta_motor=0.95, eta_prop=0.97):
+                eta_motor=0.95, eta_prop=0.97, nacelle_length=3.0):
 
          
-        self.A_inlet=A_inlet
+        self.A_inlet = A_inlet
         A_disk = self.A_inlet * 0.9  # Disk Area (m²)
         disk_radius = math.sqrt(A_disk / math.pi)  # Disk Radius (m)
         self.disk_radius = disk_radius
-
-        self.delta_p = delta_p 
+        self.nacelle_length = nacelle_length
+        self.delta_p = delta_p  # Initial placeholder  
         self.fuselage_length = 37.57
         self.fuselage_radius = 2.0    
         self.nose_length = 3.0
@@ -243,7 +243,7 @@ class Flow_around_fuselage:
         self.p = p
         self.mu = mu
         
-        # geometry creation  
+        # Geometry creation 
         N = 1500
         self.x = np.linspace(0, self.fuselage_length, N)
         self.Re_x = self.rho * self.free_stream_velocity * self.x / self.mu
@@ -268,38 +268,47 @@ class Flow_around_fuselage:
 
         # Get radius at propulsor position from geometry
         idx = np.argmin(np.abs(self.x - propulsor_position))
-        R_prop = self.y_upper[idx]  #  from your geometry array
-        
+        R_prop = self.y_upper[idx]  # from   geometry array
     
         self.effective_A_disk = np.pi * (self.disk_radius**2 - R_prop**2)
         if self.effective_A_disk <= 0:
             raise ValueError("Disk radius must exceed fuselage radius at propulsor")
 
-       
         self.A_disk = np.pi * self.disk_radius**2
         self.propulsor_position = propulsor_position
 
+         
         self.nacelle = NacelleParameters(
             v_inlet=self.free_stream_velocity,
             A_inlet=self.effective_A_disk
         )
-        self.delta_p = delta_p
+        nacelle_params = self.nacelle.variable_parameters(
+            rho=self.rho,
+            p=self.p
+        )
+        
+         
+        self.delta_p = nacelle_params[10]   
+        v_disk = nacelle_params[5]          
+
         self.eta_disk = eta_disk
         self.eta_motor = eta_motor
         self.eta_prop = eta_prop
         self.eta_total = eta_motor * eta_prop * eta_disk
         self.disk_active = False
 
+        
         self.actuator_disk = ActuatorDiskModel(
             rho=self.rho,
             A_disk=self.effective_A_disk,
-            v_inlet=self.free_stream_velocity,
-            v_disk=self.free_stream_velocity,
+            v_inlet=self.free_stream_velocity,  # From freestream
+            v_disk=v_disk,                      # From nacelle calculation
             eta_disk=eta_disk,
             eta_motor=eta_motor,
             eta_prop=eta_prop
         )
 
+        # Rest of original code unchanged
         self.dx = self.x[1] - self.x[0]
         self.source_strength = self.source_strength_thin_body()
 
@@ -313,7 +322,6 @@ class Flow_around_fuselage:
 
         self.results_with_propulsor = None
         self.results_without_propulsor = None
-        
 
     def source_strength_thin_body(self):
         dr2_dx = np.zeros_like(self.x)
@@ -389,29 +397,31 @@ class Flow_around_fuselage:
 
     def boundary_layer_velocity_profile(self, x_pos, y):
         """
-        Compte velocity at (x, y) considering boundary layer effects.
-        
+        Compute velocity at (x, y) considering boundary layer effects.
         Uses a laminar profile if the local Reynolds number is below 5e5, otherwise applies the turbulent 1/7th power law.
         """
         # Find the index corresponding to x_pos
         idx = np.argmin(np.abs(self.x - x_pos))
         delta_99 = self.delta_99[idx]
-        U_e = self.free_stream_velocity  # Freestream velocity outside BL
+        R_fuselage = self.R[idx]  
+        U_e = self.get_edge_velocity(x_pos)  
         
-        # If y is outside the boundary layer, return the freestream velocity
-        if y > delta_99:
+        # Convert radial y to wall-normal distance
+        y_wall = y - R_fuselage   
+        
+        # If y is outside the boundary layer, return the edge velocity
+        if y_wall > delta_99 or y_wall < 0: 
             return U_e
         
         # Determine local Reynolds number at x_pos
         Re_local = self.Re_x[idx]
         
         if Re_local < 5e5:
-            # Laminar boundary layer: a simple parabolic profile
-            # This profile satisfies: u=0 at y=0 and u=U_e at y=delta_99
-            return U_e * (2 * (y / delta_99) - (y / delta_99) ** 2)  # Re check this part
+            # Laminar boundary layer  
+            return U_e * (2 * (y_wall / delta_99) - (y_wall / delta_99) ** 2)  
         else:
-            # Turbulent boundary layer: 1/7th power law profile
-            return U_e * (y / delta_99) ** (1/7)
+            # Turbulent boundary layer (1/7th power law with wall distance)
+            return U_e * (y_wall / delta_99) ** (1/7)  
     
 
     def get_local_velocity_at_propulsor(self):
@@ -433,8 +443,11 @@ class Flow_around_fuselage:
             u = self.boundary_layer_velocity_profile(x_disk, y)
             velocities.append(u)
         
-        # averaged velocity using the trapezoidal rule
-        u_avg = np.trapz(velocities, r) / (R_disk - R_prop)
+         
+        numerator = np.trapz([u * r_i for u, r_i in zip(velocities, r)], r)
+        denominator = 0.5 * (R_disk**2 - R_prop**2)
+        u_avg = (2 * numerator) / denominator  # Area-weighted average
+        
         return u_avg
 
 
@@ -492,7 +505,6 @@ class Flow_around_fuselage:
          
         spread_width = 10 * self.dx  # Increase spread region # Re check this part , re check this part no source to support this yet**
 
-        # **Use a tanh function for smoother and broader influence** re check this part no source to support this yet**
         influence_function = 0.5 * (1 + np.tanh((self.x - self.propulsor_position) / spread_width))
 
         # Compute the pressure jump scaled by area ratio
@@ -550,16 +562,29 @@ class Flow_around_fuselage:
         cursor = mplcursors.cursor([line_incomp, line_comp, line_upper], hover=True)
         cursor.connect("add", on_hover)
         
-        # 
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+    def get_edge_velocity(self, x_pos):
+        """Get local edge velocity from potential flow solution at fuselage surface"""
+        idx = np.argmin(np.abs(self.x - x_pos))
+        U, V = self.velocity_components_around_fuselage(
+            self.x[idx], 
+            self.y_upper[idx],
+            apply_mask=False
+        )
+        return np.sqrt(U**2 + V**2)
+
     def compute_pressure_gradient(self):
+        """Compute the pressure coefficient gradient, including a broader propulsor effect."""
+         
+        U_e_array = np.array([self.get_edge_velocity(xi) for xi in self.x])
+        q = 0.5 * self.rho * U_e_array**2  
+        
         _, Cp_compressible = self.pressure_distribution()
-        q = 0.5 * self.rho * self.free_stream_velocity**2   
         dCp_dx = np.gradient(Cp_compressible, self.x)
-        dp_dx = -q * dCp_dx
+        dp_dx = -q * dCp_dx  
         return dp_dx
 
     def solve_boundary_layer(self):
@@ -607,38 +632,37 @@ class Flow_around_fuselage:
         eps = 1e-10  # Small constant to avoid division by zero
         R_min = 0.1  # Minimum radius threshold 
 
-        # Ensure U_e is positive
-        U_e = max(self.free_stream_velocity, eps)
-
-        # Interpolate the pressure gradient at the current x position
-        current_dp_dx = np.interp(x, self.x, dp_dx)
+        # Get local U_e from potential flow solution
+        U_e = self.get_edge_velocity(x)
+        
+        # Calculate dU_e/dx using central differences
+        idx = np.clip(np.searchsorted(self.x, x), 1, len(self.x)-2)
+        if idx == 0:
+            dU_e_dx = (self.get_edge_velocity(self.x[1]) - U_e) / (self.x[1] - self.x[0])
+        elif idx == len(self.x)-1:
+            dU_e_dx = (U_e - self.get_edge_velocity(self.x[-2])) / (self.x[-1] - self.x[-2])
+        else:
+            dU_e_dx = (self.get_edge_velocity(self.x[idx+1]) - self.get_edge_velocity(self.x[idx-1])) / (self.x[idx+1] - self.x[idx-1])
 
         # Geometry parameters
-        i = np.clip(np.searchsorted(self.x, x), 1, len(self.x) - 2)  # Avoid edge indices
-        R = np.maximum(self.R[i], eps)  # Ensure R is always positive
-
-        # Compute dR/dx using central difference, handle boundaries
-        if 0 < i < len(self.x) - 1:
-            dR_dx = (self.R[i + 1] - self.R[i - 1]) / (self.x[i + 1] - self.x[i - 1])
-        else:
-            dR_dx = 0.0
-
-         
-        if R < R_min:
-            dR_dx = 0.0
-        R_safe = max(R, R_min)  # Use R_min to prevent division by small R
+        R = np.maximum(self.R[idx], R_min)  # Prevent division by small R
+        dR_dx = (self.R[idx+1] - self.R[idx-1]) / (self.x[idx+1] - self.x[idx-1]) if 0 < idx < len(self.x)-1 else 0.0
 
         # Flow regime parameters
         Re_x = self.rho * U_e * x / (self.mu + eps)
-        Cf = self.compute_skin_friction(i)
+        Cf = self.compute_skin_friction(idx)
         H = 2.59 if Re_x < 5e5 else 1.29  # Shape factor
 
-        # Momentum thickness equation (axisymmetric) -  re check this part
-        dtheta_dx = (Cf / 2) + (theta / (self.rho * (U_e**2 + eps)) * (H + 2) * current_dp_dx - (theta / R) * dR_dx )
-                     
+        # Momentum thickness equation (axisymmetric) - Modified with dU_e/dx
+        momentum_term = (theta / (self.rho * (U_e**2 + eps))) * ((H + 2) * dp_dx[idx] - self.rho * U_e * dU_e_dx * theta)
+        geometry_term = (theta / R) * dR_dx
+        dtheta_dx = (Cf / 2) + momentum_term - geometry_term
+
         # Delta99 equation based on empirical thickness ratios
-        delta_theta_ratio = 5.0 / 0.664 if Re_x < 5e5 else 0.16 / 0.016
-        ddelta99_dx = delta_theta_ratio * dtheta_dx - (delta_99 / R_safe) * dR_dx
+        if Re_x < 5e5:  # Laminar
+            ddelta99_dx = 5.0 * dtheta_dx - (delta_99 / R) * dR_dx
+        else:  # Turbulent
+            ddelta99_dx = (delta_99 / theta) * dtheta_dx - (delta_99 / R) * dR_dx
 
         return [dtheta_dx, ddelta99_dx]
     
@@ -801,15 +825,17 @@ class Flow_around_fuselage:
             p=self.p
         )
 
-        #  only delta_p  
+          
         self.delta_p = all_params[-1]  
+        nacelle_params = self.nacelle.variable_parameters(rho=self.rho, p=self.p)
+        v_disk = nacelle_params[5]   
 
         self.nacelle.v_inlet = v_local
         self.actuator_disk = ActuatorDiskModel(
             rho=self.rho,
             A_disk=self.effective_A_disk,
-            v_inlet=v_local,   
-            v_disk=v_local,
+            v_inlet=self.get_local_velocity_at_propulsor(),   
+            v_disk=v_disk,
             eta_disk=self.eta_disk,
             eta_motor=self.eta_motor,
             eta_prop=self.eta_prop
@@ -842,48 +868,81 @@ class Flow_around_fuselage:
         self.solve_boundary_layer()
  
     def compute_net_thrust(self):
-        """Calculate net thrust using the ActuatorDiskModel."""
+        """Net thrust = Gross thrust - (Intake drag + Nacelle drag)"""
         if not self.disk_active:
             return 0.0
-        return self.actuator_disk.calculate_thrust()
-
+        
+        # Gross thrust from actuator disk
+        T_gross = self.actuator_disk.calculate_thrust()
+        
+        # Intake drag 
+        q_inlet = 0.5 * self.rho * self.nacelle.v_inlet**2
+        intake_drag = q_inlet * (self.nacelle.A_inlet - self.effective_A_disk)
+        
+        # Nacelle drag calculation 
+        inlet_radius = math.sqrt(self.nacelle.A_inlet / math.pi)
+        wetted_area = 2 * math.pi * inlet_radius * self.nacelle_length  
+        
+        # Empirical drag coefficients / Double Check this part
+        C_d_form = 0.02  # Form drag coefficient for streamlined nacelle
+        C_f = 0.002      # Skin friction coefficient
+        
+        form_drag = 0.5 * self.rho * self.free_stream_velocity**2 * self.nacelle.A_inlet * C_d_form
+        skin_friction = 0.5 * self.rho * self.free_stream_velocity**2 * wetted_area * C_f
+        
+        nacelle_drag = form_drag + skin_friction
+        
+        return T_gross - (intake_drag + nacelle_drag)
+     # Drag per unit span: D' = ρ U_e² θ  / https://www.youtube.com/watch?v=olqoce8ui5s&t=1447s re check this part
     def compute_drag_reduction(self):
-        if not self.disk_active:
-            return 0.0
-        # Integrate momentum thickness (θ) over the fuselage / https://www.youtube.com/watch?v=olqoce8ui5s&t=1447s re check this part 
-        D_NoBLI = np.trapz(0.5 * self.rho * self.free_stream_velocity**2 * 
-                            self.results_without_propulsor["theta"], self.x)
-        D_BLI = np.trapz(0.5 * self.rho * self.free_stream_velocity**2 * 
-                        self.results_with_propulsor["theta"], self.x)
-        return D_NoBLI - D_BLI
+        """Drag reduction including engine installation drag"""
+        # Original boundary layer drag difference
+        D_prime_noBLI = self.rho * self.free_stream_velocity**2 * self.results_without_propulsor["theta"]
+        D_prime_BLI = self.rho * self.free_stream_velocity**2 * self.results_with_propulsor["theta"]
+        
+        # Integrate around circumference and along fuselage
+        D_noBLI = np.trapz(D_prime_noBLI * 2 * np.pi * self.R, self.x)
+        D_BLI = np.trapz(D_prime_BLI * 2 * np.pi * self.R, self.x)
+        
+        # Engine installation drag components (intake + nacelle)
+        v_local = self.get_local_velocity_at_propulsor()
+        q_inlet = 0.5 * self.rho * v_local**2
+        intake_drag = q_inlet * (self.nacelle.A_inlet - self.effective_A_disk)
+        
+        inlet_radius = math.sqrt(self.nacelle.A_inlet / math.pi)
+        wetted_area = 2 * math.pi * inlet_radius * self.nacelle_length   
+        nacelle_drag = 0.5 * self.rho * self.free_stream_velocity**2 * (0.02 * self.nacelle.A_inlet + 0.002 * wetted_area)
+        
+        # Net drag reduction = BLI benefit 
+        return (D_noBLI - D_BLI) - (intake_drag + nacelle_drag)
 
     def compute_PSC(self):
-        """Calculate Power Saving Coefficient (PSC) as (P_NonBLI - P_BLI)/P_NonBLI."""
-        # Compute drag forces for both cases
-        D_NoBLI = np.trapz(
-            0.5 * self.rho * self.free_stream_velocity**2 * self.results_without_propulsor["theta"], 
-            self.x
-        )
-        D_BLI = np.trapz(
-            0.5 * self.rho * self.free_stream_velocity**2 * self.results_with_propulsor["theta"], 
-            self.x
-        )
         
-        # Compute power terms: Power = Drag × Freestream Velocity (Drag=Thrust during the cruise)
-        P_NonBLI = D_NoBLI * self.free_stream_velocity  # Power without BLI
-        P_BLI = D_BLI * self.free_stream_velocity        # Power with BLI
+        # Base drag values
+        D_prime_noBLI = self.rho * self.free_stream_velocity**2 * self.results_without_propulsor["theta"]
+        D_prime_BLI = self.rho * self.free_stream_velocity**2 * self.results_with_propulsor["theta"]
         
-        # Avoid division by zero
-        if P_NonBLI == 0:
-            return 0.0
+        # Integrate around circumference and along fuselage
+        D_NoBLI = np.trapz(D_prime_noBLI * 2 * np.pi * self.R, self.x)
+        D_BLI = np.trapz(D_prime_BLI * 2 * np.pi * self.R, self.x)
+
+        # Engine drag components
+        v_local = self.get_local_velocity_at_propulsor()
+        q_inlet = 0.5 * self.rho * v_local**2
+        intake_drag = q_inlet * (self.nacelle.A_inlet - self.effective_A_disk)
+        inlet_radius = math.sqrt(self.nacelle.A_inlet / math.pi)
+        wetted_area = 2 * math.pi * inlet_radius * self.nacelle_length
+        nacelle_drag = 0.5 * self.rho * self.free_stream_velocity**2 * (0.02 * self.nacelle.A_inlet + 0.002 * wetted_area)
         
-        # Calculate PSC
-        PSC = (P_NonBLI - P_BLI) / P_NonBLI
-        return PSC
+        
+        P_NonBLI = D_NoBLI * self.free_stream_velocity
+        P_BLI = (D_BLI + intake_drag + nacelle_drag) * v_local / 0.9
+        
+        return (P_NonBLI - P_BLI) / P_NonBLI if P_NonBLI != 0 else 0.0
 
 
 class ActuatorDiskModel:
-    def __init__(self, rho, A_disk, v_inlet, v_disk, eta_disk=0.95, eta_motor=0.95, eta_prop=0.97):
+    def __init__(self, rho, A_disk, v_inlet, v_disk, eta_disk=0.80, eta_motor=0.80, eta_prop=0.80):
         self.rho = rho  # Air Density (kg/m^3)
         self.A_disk = A_disk  # Disk Area (m^2)
         self.v_inlet = v_inlet  # Inlet Velocity (m/s)
