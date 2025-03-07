@@ -222,8 +222,7 @@ class EngineMassEstimation:
  
 class Flow_around_fuselage:
     def __init__(self, v_freestream, Mach, rho, mu, delta_p, A_inlet, p,
-                propulsor_position=33.0, 
-                disk_radius=2.2, eta_disk=0.95, 
+                propulsor_position=33.0, eta_disk=0.95, 
                 eta_motor=0.95, eta_prop=0.97, nacelle_length=3.0):
 
          
@@ -232,7 +231,7 @@ class Flow_around_fuselage:
         disk_radius = math.sqrt(A_disk / math.pi)  # Disk Radius (m)
         self.disk_radius = disk_radius
         self.nacelle_length = nacelle_length
-        self.delta_p = delta_p  # Initial placeholder  
+        self.delta_p = delta_p     # Delta P / Recheck the logic !!!!
         self.fuselage_length = 37.57
         self.fuselage_radius = 2.0    
         self.nose_length = 3.0
@@ -349,31 +348,53 @@ class Flow_around_fuselage:
         return self.free_stream_velocity * np.pi * dr2_dx
     
     def plot_fuselage_geometry(self, canvas_frame):
-        # Create a figure for the fuselage vs source strength plot
+        # Create figure and axis
         fig, ax1 = plt.subplots(figsize=(12, 4))
         
+        # Plot fuselage geometry with style matching velocity plot
+        line_upper, = ax1.plot(self.x, self.y_upper, 'k', linewidth=2, label='Fuselage')
+        line_lower, = ax1.plot(self.x, self.y_lower, 'k', linewidth=2)
+        ax1.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
         
-        line_upper, = ax1.plot(self.x, self.y_upper, 'b', label='Fuselage')
-        line_lower, = ax1.plot(self.x, self.y_lower, 'b')
-        ax1.fill_between(self.x, self.y_upper, self.y_lower, color='lightblue', alpha=0.3)
+        # Set aspect ratio (preserve existing setting)
+        ax1.set_aspect(0.5)
+        
+        # Align zero points with symmetric limits
+        y_max = max(self.y_upper) * 1.1
+        ax1.set_ylim(-y_max, y_max)
+        
+        # Configure primary axis (left side)
         ax1.set_xlabel('Axial Position [m]')
-        ax1.set_ylabel('Vertical Position [m]', fontsize=9, color='b')
-        ax1.set_title('Source Strength Distribution')
+        ax1.set_ylabel('Vertical Position [m]')
         ax1.grid(True)
+        ax1.set_title('Source Strength Distribution')
 
+        # Create twin axis for source strength (right side)
         ax2 = ax1.twinx()
-        line_source, = ax2.plot(self.x, self.source_strength, 'r', label='Source Strength Q(x)')
-        ax2.set_ylabel('Source Strength Q(x) [m²/s]', color='r', fontsize=9)
+        line_source, = ax2.plot(self.x, self.source_strength, 'r')
+        
+        # Set symmetric limits for zero alignment
+        q_max = max(abs(self.source_strength)) * 1.1
+        ax2.set_ylim(-q_max, q_max)
+        
+        # Configure secondary axis (right side)
+        ax2.set_ylabel('Source Strength Q(x) [m²/s]')
+        
+        # Create combined legend
+        lines = [line_upper, line_source]
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc='upper center', 
+                bbox_to_anchor=(0.5, -0.15), ncol=2)
 
-        ax1.legend(loc='lower left')
-        ax2.legend(loc='lower right')
+        # Final layout adjustments
         fig.tight_layout()
-
-        # Embed the figure into the provided canvas_frame
+        
+        # Embed in GUI
+        for widget in canvas_frame.winfo_children():
+            widget.destroy()
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def velocity_components_around_fuselage(self, X, Y, apply_mask=True):
         U = np.full(X.shape, self.free_stream_velocity, dtype=np.float64)
@@ -518,35 +539,39 @@ class Flow_around_fuselage:
 
 
     def plot_pressure_distribution(self, canvas_frame):
-        
         for widget in canvas_frame.winfo_children():
             widget.destroy()
             
-        
         Cp_incompressible, Cp_compressible = self.pressure_distribution()  
         
-       
         fig, ax1 = plt.subplots(figsize=(12, 6))
         
-         
+        # Plot pressure coefficients
         line_incomp, = ax1.plot(self.x, Cp_incompressible, 'b', label='Incompressible Cp')
         line_comp, = ax1.plot(self.x, Cp_compressible, 'r', label='Compressible Cp')
         ax1.set_xlabel('Axial Position [m]')
-        ax1.set_ylabel('Pressure Coefficient (Cp)', color='b')
-        ax1.tick_params(axis='y', labelcolor='b')
+        ax1.set_ylabel('Pressure Coefficient (Cp)')
         ax1.grid(True)
         
-         
+        # Create twin axis with fuselage geometry matching velocity plot style
         ax2 = ax1.twinx()
-        line_upper, = ax2.plot(self.x, self.y_upper, 'k-', label='Fuselage Upper')
-        line_lower, = ax2.plot(self.x, self.y_lower, 'k-', label='Fuselage Lower')
-        ax2.set_ylabel('Vertical Position [m]', color='k')
-        ax2.tick_params(axis='y', labelcolor='k')
+        line_upper, = ax2.plot(self.x, self.y_upper, 'k', linewidth=2, label='Fuselage')
+        line_lower, = ax2.plot(self.x, self.y_lower, 'k', linewidth=2)
+        ax2.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
         
-         
+        # Set aspect ratio for proper slenderness
+        ax2.set_aspect(0.5)
+        
+        # Align zero points symmetrically
+        y_max = max(self.y_upper) * 1.1
+        ax2.set_ylim(-y_max, y_max)
+        ax2.set_ylabel('Vertical Position [m]')
+        
+        # Create unified legend below plot
         lines = [line_incomp, line_comp, line_upper]
         labels = [l.get_label() for l in lines]
-        ax1.legend(lines, labels, loc='upper left')
+        ax1.legend(lines, labels, loc='upper center', 
+                bbox_to_anchor=(0.5, -0.15), ncol=3)
         
         
         def on_hover(sel):
@@ -561,6 +586,10 @@ class Flow_around_fuselage:
         
         cursor = mplcursors.cursor([line_incomp, line_comp, line_upper], hover=True)
         cursor.connect("add", on_hover)
+        
+        
+        fig.tight_layout()
+        
         
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
         canvas.draw()
@@ -683,22 +712,36 @@ class Flow_around_fuselage:
         
         for widget in canvas_frame.winfo_children():
             widget.destroy()
- 
+
         fig, ax = plt.subplots(figsize=(12, 6))
 
-        
+        # Plot fuselage geometry with consistent style
         ax.plot(self.x, self.y_upper, 'k', linewidth=2, label='Fuselage')
- 
+        ax.plot(self.x, self.y_lower, 'k', linewidth=2)
+        ax.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
+
+        # Set aspect ratio for proper slenderness
+        ax.set_aspect(0.5)
+
+        # Align zero points symmetrically
+        y_max = max(self.y_upper) * 1.1
+        ax.set_ylim(-y_max, y_max)
+
+        # Boundary layer calculations
         results_without = self.results_without_propulsor
         results_with = self.results_with_propulsor
 
-       
         dy_dx = np.gradient(self.y_upper, self.x)
         theta = np.arctan(dy_dx)
         delta_normal_without = results_without["delta_99"] * np.cos(theta)
         delta_normal_with = results_with["delta_99"] * np.cos(theta)
 
-         
+        # Exaggerate boundary layer thickness for visibility
+        exaggeration_factor = 20  # Adjust this factor to control the exaggeration
+        delta_normal_without *= exaggeration_factor
+        delta_normal_with *= exaggeration_factor
+
+        # Plot boundary layer thickness (preserve original colors and alpha)
         ax.fill_between(
             self.x, 
             self.y_upper + delta_normal_without, 
@@ -714,23 +757,23 @@ class Flow_around_fuselage:
             label='δ99 (With Propulsor)'
         )
 
-         
+        # Create twin axis for absolute boundary layer thickness
         ax2 = ax.twinx()
         line_without, = ax2.plot(
             results_without["x"], 
-            results_without["delta_99"], 
+            results_without["delta_99"] * exaggeration_factor,  # Exaggerate here too
             'b--', 
             label='δ99 Without Propulsor'
         )
         line_with, = ax2.plot(
             results_with["x"], 
-            results_with["delta_99"], 
+            results_with["delta_99"] * exaggeration_factor,  # Exaggerate here too
             'r--', 
             label='δ99 With Propulsor'
         )
-        ax2.set_ylabel('Absolute Boundary Layer Thickness [m]', color='k')
+        ax2.set_ylabel('Absolute Boundary Layer Thickness [m] (Exaggerated)', color='k')
 
-         
+        # Transition line (preserve original style)
         transition_idx = np.where(self.Re_x >= 5e5)[0][0]
         ax.axvline(
             self.x[transition_idx], 
@@ -739,21 +782,22 @@ class Flow_around_fuselage:
             label=f'Transition (x={self.x[transition_idx]:.1f}m)'
         )
 
-         
+        # Configure axes and labels
         ax.set_xlabel('Axial Position [m]')
         ax.set_ylabel('Vertical Position [m]')
-        ax.set_title('Boundary Layer Development Comparison')
+        ax.set_title('Boundary Layer Development Comparison (Exaggerated)')
         ax.grid(True)
+
+        # Create combined legend
         lines1, labels1 = ax.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper center', 
+                bbox_to_anchor=(0.5, -0.15), ncol=3)
 
-       
+        # Hover functionality (preserve original)
         def on_hover(sel):
             x_val = sel.target[0]
-            # For "Without Propulsor" curve
             idx_without = np.argmin(np.abs(results_without["x"] - x_val))
-            # For "With Propulsor" curve
             idx_with = np.argmin(np.abs(results_with["x"] - x_val))
             
             sel.annotation.set_text(
@@ -762,11 +806,10 @@ class Flow_around_fuselage:
                 f"δ99 (With): {results_with['delta_99'][idx_with]:.3f} m"
             )
 
-         
         cursor = mplcursors.cursor([line_without, line_with], hover=True)
         cursor.connect("add", on_hover)
 
-         
+        # Metrics text box (preserve original)
         T_net = self.compute_net_thrust()
         D_red = self.compute_drag_reduction()
         PSC = self.compute_PSC()
@@ -784,6 +827,9 @@ class Flow_around_fuselage:
             horizontalalignment='left',
             bbox=dict(facecolor='wheat', alpha=0.5, edgecolor='black', boxstyle='round')
         )
+
+        # Final layout adjustments
+        fig.tight_layout()
 
         # Embed the figure and add toolbar
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
