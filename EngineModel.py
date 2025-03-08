@@ -241,7 +241,13 @@ class Flow_around_fuselage:
         self.rho = rho
         self.p = p
         self.mu = mu
+        self.propulsor_position = propulsor_position
         
+        if self.Mach >= 1:
+            raise ValueError("The model is invalid for Mach ≥ 1")
+        if self.Mach < 0.3:  # Incompressible flow
+            raise ValueError("The model is invalid for Mach < 0.3")
+
         # Geometry creation 
         N = 1500
         self.x = np.linspace(0, self.fuselage_length, N)
@@ -249,7 +255,7 @@ class Flow_around_fuselage:
         self.y_upper = np.zeros(N)
         self.y_lower = np.zeros(N)
   
-        for i, xi in enumerate(self.x):
+        for i, xi in enumerate(self.x): #Approximate aircraft geometry
             if xi <= self.nose_length:
                 y = self.fuselage_radius * (1 - ((xi - self.nose_length)/self.nose_length)**2)
                 self.y_upper[i] = y
@@ -273,18 +279,9 @@ class Flow_around_fuselage:
         if self.effective_A_disk <= 0:
             raise ValueError("Disk radius must exceed fuselage radius at propulsor")
 
-        self.A_disk = np.pi * self.disk_radius**2
-        self.propulsor_position = propulsor_position
 
-         
-        self.nacelle = NacelleParameters(
-            v_inlet=self.free_stream_velocity,
-            A_inlet=self.effective_A_disk
-        )
-        nacelle_params = self.nacelle.variable_parameters(
-            rho=self.rho,
-            p=self.p
-        )
+        self.nacelle = NacelleParameters(v_inlet=self.free_stream_velocity, A_inlet=self.effective_A_disk)
+        nacelle_params = self.nacelle.variable_parameters(rho=self.rho, p=self.p)
           
         self.delta_p = nacelle_params[10]   
         v_disk = nacelle_params[5]          
@@ -293,8 +290,8 @@ class Flow_around_fuselage:
         self.eta_motor = eta_motor
         self.eta_prop = eta_prop
         self.eta_total = eta_motor * eta_prop * eta_disk
-        self.disk_active = False
-
+        self.disk_active = False #  Recheck the logic !!!!
+ 
         
         self.actuator_disk = ActuatorDiskModel(
             rho=self.rho,
@@ -323,6 +320,8 @@ class Flow_around_fuselage:
 
     def source_strength_thin_body(self):
         dr2_dx = np.zeros_like(self.x)
+
+        
         for i, xi in enumerate(self.x):
             if self.Mach < 0.3:  # Incompressible flow
                 if xi <= self.nose_length:
@@ -355,7 +354,7 @@ class Flow_around_fuselage:
         line_lower, = ax1.plot(self.x, self.y_lower, 'k', linewidth=2)
         ax1.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
         
-        # Set aspect ratio (preserve existing setting)
+        # Set aspect ratio  
         ax1.set_aspect(0.5)
         
         # Align zero points with symmetric limits
@@ -396,7 +395,7 @@ class Flow_around_fuselage:
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def velocity_components_around_fuselage(self, X, Y, apply_mask=True):
-        U = np.full(X.shape, self.free_stream_velocity, dtype=np.float64)
+        U = np.full(X.shape, self.free_stream_velocity, dtype=np.float64) # Free stream velocity + U from the source
         V = np.zeros(Y.shape, dtype=np.float64)
         for i in range(len(self.x)):
             if self.source_strength[i] == 0:
@@ -404,7 +403,7 @@ class Flow_around_fuselage:
             dx = X - self.x[i]
             dy = Y
             r_sq = dx**2 + dy**2 + 1e-6
-            U += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dx / r_sq)
+            U += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dx / r_sq) # Aerodynamics of Aircraft 1 Lecture Notes / We re adding the computed U value to the free stream velocity, U=freestream velocity above 
             V += (self.source_strength[i] * self.dx / (2 * np.pi)) * (dy / r_sq) # Aerodynamics of Aircraft 1 Lecture Notes
         if apply_mask:
             epsilon = 1e-6
@@ -415,6 +414,14 @@ class Flow_around_fuselage:
                 V[x_mask & y_mask] = np.nan
         return U, V
     
+    def net_velocity_calcutaion(self, x_pos):
+        idx = np.argmin(np.abs(self.x - x_pos))
+        U, V = self.velocity_components_around_fuselage(
+            self.x[idx], 
+            self.y_upper[idx],
+            apply_mask=False
+        )
+        return np.sqrt(U**2 + V**2)
     
     def plot_velocity_streamlines(self, canvas_frame):
         for widget in canvas_frame.winfo_children():
@@ -456,94 +463,82 @@ class Flow_around_fuselage:
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
-
-
-    def boundary_layer_velocity_profile(self, x_pos, y):
-        """
-        Compute velocity at (x, y) considering boundary layer effects.
-        Uses a laminar profile if the local Reynolds number is below 5e5, otherwise applies the turbulent 1/7th power law.
-        """
-        # Find the index corresponding to x_pos
-        idx = np.argmin(np.abs(self.x - x_pos))
-        delta_99 = self.delta_99[idx]
-        R_fuselage = self.R[idx]  
-        U_e = self.get_edge_velocity(x_pos)  
-        
-        # Convert radial y to wall-normal distance
-        y_wall = y - R_fuselage   
-        
-        # If y is outside the boundary layer, return the edge velocity
-        if y_wall > delta_99 or y_wall < 0: 
-            return U_e
-        
-        # Determine local Reynolds number at x_pos
-        Re_local = self.Re_x[idx]
-        
-        if Re_local < 5e5:
-            # Laminar boundary layer  
-            return U_e * (2 * (y_wall / delta_99) - (y_wall / delta_99) ** 2)  
-        else:
-            # Turbulent boundary layer (1/7th power law with wall distance)
-            return U_e * (y_wall / delta_99) ** (1/7)  
-    
-
-    def get_local_velocity_at_propulsor(self):
-        """Compute mass-averaged velocity over the actuator disk area."""
-        # Get the index at the propulsor position (defined in __init__)
-        idx = np.argmin(np.abs(self.x - self.propulsor_position))
-        R_prop = self.y_upper[idx]  # Fuselage radius at the propulsor location
-        R_disk = self.disk_radius   # Outer radius of the disk
-
-        # Create radial coordinates for the annulus (from R_prop to R_disk)
-        r = np.linspace(R_prop, R_disk, 100)
-        
-        # Axial position at the disk is the propulsor position
-        x_disk = self.propulsor_position
-
-        # Integrate the velocity over the disk using the boundary layer profile - Defined before
-        velocities = []
-        for y in r:
-            u = self.boundary_layer_velocity_profile(x_disk, y)
-            velocities.append(u)
-        
-         
-        numerator = np.trapz([u * r_i for u, r_i in zip(velocities, r)], r)
-        denominator = 0.5 * (R_disk**2 - R_prop**2)
-        u_avg = (2 * numerator) / denominator  # Area-weighted average
-        
-        return u_avg
-
-
-        
     def pressure_distribution(self):
-        """Compute the pressure coefficient distribution, including a broader propulsor effect."""
+        """
+        Computes surface pressure distribution with BLI effects using Prandtl-Glauert correction.
+        Features:
+        - Mach number validation (0.3 < M < 0.95)
+        - Gaussian-distributed actuator disk influence
+        - Mach-adaptive pressure scaling
+        - Cp delta clamping for physical realism
         
-        # Compute velocity components and magnitude
-        U, V = self.velocity_components_around_fuselage(self.x, self.y_upper, apply_mask=False)
-        velocity_magnitude = np.sqrt(U**2 + V**2)
+        Returns:
+            tuple: (Cp_incompressible, Cp_compressible)
+        """
+        
+        # 1. Mach number validation -------------------------------------------------
+        if not 0.3 < self.Mach < 0.95:
+            raise ValueError(
+                f"Mach {self.Mach:.2f} out of valid range (0.3 < M < 0.95). "
+                "Prandtl-Glauert correction invalid."
+            )
 
-        # Compute the incompressible pressure coefficient
-        Cp_incompressible = 1 - (velocity_magnitude / self.free_stream_velocity)**2
+        # 2. Base velocity and pressure calculation ---------------------------------
+        # Calculate velocity components at surface points
+        U, V = self.velocity_components_around_fuselage(
+            self.x, 
+            self.y_upper,
+            apply_mask=False  # Critical for surface points
+        )
+        
+        # Compute velocity magnitude ratio (V/V∞)
+        velocity_ratio = np.sqrt(U**2 + V**2) / self.free_stream_velocity
+        
+        # Incompressible Cp using Bernoulli
+        Cp_incompressible = 1 - velocity_ratio**2
 
-        # Apply compressibility correction if necessary
-        if self.Mach > 0.3:
-            Cp_compressible = Cp_incompressible / np.sqrt(1 - self.Mach**2)
-        else:
-            Cp_compressible = Cp_incompressible
+        # 3. Prandtl-Glauert compressibility correction -----------------------------
+        beta = np.sqrt(1 - self.Mach**2)  # Compressibility factor
+        Cp_compressible = Cp_incompressible / beta
 
-         
-        spread_width = 10 * self.dx  # Increase spread region # Re check this part , re check this part no source to support this yet**
-
-        influence_function = 0.5 * (1 + np.tanh((self.x - self.propulsor_position) / spread_width))
-
-        # Compute the pressure jump scaled by area ratio
-        area_ratio = self.effective_A_disk / self.A_disk
-        pressure_jump = (self.delta_p * area_ratio) / (0.5 * self.rho * self.free_stream_velocity**2)
-
-        # Apply the pressure effect smoothly across the distribution
-        Cp_compressible += pressure_jump * influence_function
+        # 4. Actuator Disk Pressure Effect ------------------------------------------
+        # 4a. Gaussian influence field parameters
+        prop_pos = self.propulsor_position
+        disk_std_dev = 2.5 * self.disk_radius  # 95% effect within ±5 radii
+        
+        # 4b. Normalized Gaussian distribution
+        x_rel = (self.x - prop_pos) / disk_std_dev
+        disk_influence = np.exp(-0.5 * x_rel**2)  # Peak=1 at prop position
+        
+        # 4c. Dynamic pressure reference
+        q_inf = 0.5 * self.rho * self.free_stream_velocity**2
+        
+        # 4d. Mach-adaptive scaling (ramps from M=0.3 to 0.9)
+        mach_scale = np.clip((self.Mach - 0.3)/0.6, 0.0, 1.0)  # 0.3→0, 0.9→1
+        
+        # 4e. Pressure jump calculation
+        raw_pressure_jump = (self.delta_p / q_inf) * disk_influence * mach_scale
+        
+        # 4f. Safety clamping (based on experimental BLI data)
+        MAX_CP_JUMP = 0.35  # Empirical limit for attached flow
+        pressure_jump = np.clip(raw_pressure_jump, -MAX_CP_JUMP, MAX_CP_JUMP)
+        
+        # 5. Apply pressure modification --------------------------------------------
+        Cp_compressible += pressure_jump
 
         return Cp_incompressible, Cp_compressible
+    
+    def compute_pressure_gradient(self):
+        """Compute the pressure coefficient gradient, including a broader propulsor effect."""
+         
+        U_e_array = np.array([self.net_velocity_calcutaion(xi) for xi in self.x])
+        q = 0.5 * self.rho * U_e_array**2  
+        
+        _, Cp_compressible = self.pressure_distribution()
+        dCp_dx = np.gradient(Cp_compressible, self.x)
+        dp_dx = -q * dCp_dx  
+        return dp_dx
+
 
     def plot_pressure_distribution(self, canvas_frame):
         for widget in canvas_frame.winfo_children():
@@ -619,26 +614,8 @@ class Flow_around_fuselage:
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    def get_edge_velocity(self, x_pos):
-        """Get local edge velocity from potential flow solution at fuselage surface"""
-        idx = np.argmin(np.abs(self.x - x_pos))
-        U, V = self.velocity_components_around_fuselage(
-            self.x[idx], 
-            self.y_upper[idx],
-            apply_mask=False
-        )
-        return np.sqrt(U**2 + V**2)
 
-    def compute_pressure_gradient(self):
-        """Compute the pressure coefficient gradient, including a broader propulsor effect."""
-         
-        U_e_array = np.array([self.get_edge_velocity(xi) for xi in self.x])
-        q = 0.5 * self.rho * U_e_array**2  
-        
-        _, Cp_compressible = self.pressure_distribution()
-        dCp_dx = np.gradient(Cp_compressible, self.x)
-        dp_dx = -q * dCp_dx  
-        return dp_dx
+
 
     def solve_boundary_layer(self):
         dp_dx = self.compute_pressure_gradient()
@@ -672,6 +649,62 @@ class Flow_around_fuselage:
         self.delta_star = self._compute_displacement_thickness()
         self.tau_wall = self._compute_wall_shear_stress()
 
+
+    def boundary_layer_velocity_profile(self, x_pos, y):
+        """
+        Compute velocity at (x, y) considering boundary layer effects.
+        Uses a laminar profile if the local Reynolds number is below 5e5, otherwise applies the turbulent 1/7th power law.
+        """
+        # Find the index corresponding to x_pos
+        idx = np.argmin(np.abs(self.x - x_pos))
+        delta_99 = self.delta_99[idx]
+        R_fuselage = self.R[idx]  
+        U_e = self.net_velocity_calcutaion(x_pos)  
+        
+        # Convert radial y to wall-normal distance
+        y_wall = y - R_fuselage   
+        
+        # If y is outside the boundary layer, return the edge velocity
+        if y_wall > delta_99 or y_wall < 0: 
+            return U_e
+        
+        # Determine local Reynolds number at x_pos
+        Re_local = self.Re_x[idx]
+        
+        if Re_local < 5e5:
+            # Laminar boundary layer  
+            return U_e * (2 * (y_wall / delta_99) - (y_wall / delta_99) ** 2)  
+        else:
+            # Turbulent boundary layer (1/7th power law with wall distance)
+            return U_e * (y_wall / delta_99) ** (1/7)  
+    
+
+    def get_local_velocity_at_propulsor(self):
+        """Compute mass-averaged velocity over the actuator disk area."""
+        # Get the index at the propulsor position (defined in __init__)
+        idx = np.argmin(np.abs(self.x - self.propulsor_position))
+        R_prop = self.y_upper[idx]  # Fuselage radius at the propulsor location
+        R_disk = self.disk_radius   # Outer radius of the disk
+
+        # Create radial coordinates for the annulus (from R_prop to R_disk)
+        r = np.linspace(R_prop, R_disk, 100)
+        
+        # Axial position at the disk is the propulsor position
+        x_disk = self.propulsor_position
+
+        # Integrate the velocity over the disk using the boundary layer profile - Defined before
+        velocities = []
+        for y in r:
+            u = self.boundary_layer_velocity_profile(x_disk, y)
+            velocities.append(u)
+        
+         
+        numerator = np.trapz([u * r_i for u, r_i in zip(velocities, r)], r)
+        denominator = 0.5 * (R_disk**2 - R_prop**2)
+        u_avg = (2 * numerator) / denominator  # Area-weighted average
+        
+        return u_avg
+
     def compute_skin_friction(self, i):
         Re_x = self.Re_x[i]
         if Re_x < 5e5:  # Laminar (from https://fluidmech.onlineflowcalculator.com/White/Chapter7)
@@ -686,16 +719,16 @@ class Flow_around_fuselage:
         R_min = 0.1  # Minimum radius threshold 
 
         # Get local U_e from potential flow solution
-        U_e = self.get_edge_velocity(x)
+        U_e = self.net_velocity_calcutaion(x)
         
         # Calculate dU_e/dx using central differences
         idx = np.clip(np.searchsorted(self.x, x), 1, len(self.x)-2)
         if idx == 0:
-            dU_e_dx = (self.get_edge_velocity(self.x[1]) - U_e) / (self.x[1] - self.x[0])
+            dU_e_dx = (self.net_velocity_calcutaion(self.x[1]) - U_e) / (self.x[1] - self.x[0])
         elif idx == len(self.x)-1:
-            dU_e_dx = (U_e - self.get_edge_velocity(self.x[-2])) / (self.x[-1] - self.x[-2])
+            dU_e_dx = (U_e - self.net_velocity_calcutaion(self.x[-2])) / (self.x[-1] - self.x[-2])
         else:
-            dU_e_dx = (self.get_edge_velocity(self.x[idx+1]) - self.get_edge_velocity(self.x[idx-1])) / (self.x[idx+1] - self.x[idx-1])
+            dU_e_dx = (self.net_velocity_calcutaion(self.x[idx+1]) - self.net_velocity_calcutaion(self.x[idx-1])) / (self.x[idx+1] - self.x[idx-1])
 
         # Geometry parameters
         R = np.maximum(self.R[idx], R_min)  # Prevent division by small R
@@ -797,7 +830,6 @@ class Flow_around_fuselage:
         )
         ax2.set_ylabel('Absolute Boundary Layer Thickness [m]', color='k')
  
-
         # Configure axes and labels
         ax.set_xlabel('Axial Position [m]')
         ax.set_ylabel('Vertical Position [m]')
@@ -810,7 +842,7 @@ class Flow_around_fuselage:
         ax.legend(lines1 + lines2, labels1 + labels2, loc='upper center', 
                 bbox_to_anchor=(0.5, -0.15), ncol=3)
 
-        # Hover functionality (preserve original)
+        # Hover functionality  
         def on_hover(sel):
             x_val = sel.target[0]
             idx_without = np.argmin(np.abs(results_without["x"] - x_val))
@@ -825,7 +857,7 @@ class Flow_around_fuselage:
         cursor = mplcursors.cursor([line_without, line_with], hover=True)
         cursor.connect("add", on_hover)
 
-        # Metrics text box (preserve original)
+        # Metrics text box  
         T_net = self.compute_net_thrust()
         D_red = self.compute_drag_reduction()
         PSC = self.compute_PSC()
@@ -1279,7 +1311,7 @@ class BoundaryLayerIngestion:
         input_frame = tk.LabelFrame(self.io_frame, text="Inputs", padx=10, pady=10)
         input_frame.pack(fill=tk.X, pady=5)
 
-        tk.Label(input_frame, text="Enter the Flight Height (Feet):").pack(anchor='w')
+        tk.Label(input_frame, text="Enter the Flight Altitude  (Feet):").pack(anchor='w')
         self.fl_entry = tk.Entry(input_frame)
         self.fl_entry.pack(fill=tk.X, pady=2)
 
