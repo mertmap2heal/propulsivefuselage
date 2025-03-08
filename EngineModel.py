@@ -225,7 +225,7 @@ class Flow_around_fuselage:
                 propulsor_position=33.0, eta_disk=0.80, 
                 eta_motor=0.80, eta_prop=0.80, nacelle_length=3.0):
 
-         
+        
         self.A_inlet = A_inlet
         A_disk = self.A_inlet * 0.9  # Disk Area (m²)
         disk_radius = math.sqrt(A_disk / math.pi)  # Disk Radius (m)
@@ -243,6 +243,14 @@ class Flow_around_fuselage:
         self.mu = mu
         self.propulsor_position = propulsor_position
         
+        #Engine Suction Parameters
+        # BLI Control Parameters
+        self.suction_strength = 0.35       # 0.2-0.3 typical for BLI
+        self.suction_width = 1.80 * self.disk_radius    # Upstream influence
+        self.recovery_width = 4.5 * self.disk_radius   # Downstream influence
+        self.delta_99_max = 0.12 * self.fuselage_length  # Max allowed BL thickness
+        self.disk_active = False #  Recheck the logic !!!!
+
         if self.Mach >= 1:
             raise ValueError("The model is invalid for Mach ≥ 1")
         if self.Mach < 0.3:  # Incompressible flow
@@ -290,7 +298,7 @@ class Flow_around_fuselage:
         self.eta_motor = eta_motor
         self.eta_prop = eta_prop
         self.eta_total = eta_motor * eta_prop * eta_disk
-        self.disk_active = False #  Recheck the logic !!!!
+       
  
         
         self.actuator_disk = ActuatorDiskModel(
@@ -464,68 +472,23 @@ class Flow_around_fuselage:
         canvas.draw()
 
     def pressure_distribution(self):
-        """
-        Computes surface pressure distribution with BLI effects using Prandtl-Glauert correction.
-        Features:
-        - Mach number validation (0.3 < M < 0.95)
-        - Gaussian-distributed actuator disk influence
-        - Mach-adaptive pressure scaling
-        - Cp delta clamping for physical realism
-        
-        Returns:
-            tuple: (Cp_incompressible, Cp_compressible)
-        """
-        
-        # 1. Mach number validation -------------------------------------------------
-        if not 0.3 < self.Mach < 0.95:
-            raise ValueError(
-                f"Mach {self.Mach:.2f} out of valid range (0.3 < M < 0.95). "
-                "Prandtl-Glauert correction invalid."
-            )
-
-        # 2. Base velocity and pressure calculation ---------------------------------
-        # Calculate velocity components at surface points
+        """Computes inviscid pressure distribution without BLI effects."""
+        # 1. Velocity components from potential flow solution
         U, V = self.velocity_components_around_fuselage(
             self.x, 
             self.y_upper,
-            apply_mask=False  # Critical for surface points
+            apply_mask=False
         )
         
-        # Compute velocity magnitude ratio (V/V∞)
+        # 2. Velocity magnitude ratio (V/V∞)
         velocity_ratio = np.sqrt(U**2 + V**2) / self.free_stream_velocity
         
-        # Incompressible Cp using Bernoulli
+        # 3. Incompressible Cp (Bernoulli's equation)
         Cp_incompressible = 1 - velocity_ratio**2
-
-        # 3. Prandtl-Glauert compressibility correction -----------------------------
-        beta = np.sqrt(1 - self.Mach**2)  # Compressibility factor
-        Cp_compressible = Cp_incompressible / beta
-
-        # 4. Actuator Disk Pressure Effect ------------------------------------------
-        # 4a. Gaussian influence field parameters
-        prop_pos = self.propulsor_position
-        disk_std_dev = 2.5 * self.disk_radius  # 95% effect within ±5 radii
         
-        # 4b. Normalized Gaussian distribution
-        x_rel = (self.x - prop_pos) / disk_std_dev
-        disk_influence = np.exp(-0.5 * x_rel**2)  # Peak=1 at prop position
+        # 4. Compressibility correction (Prandtl-Glauert)
+        Cp_compressible = Cp_incompressible / np.sqrt(1 - self.Mach**2)
         
-        # 4c. Dynamic pressure reference
-        q_inf = 0.5 * self.rho * self.free_stream_velocity**2
-        
-        # 4d. Mach-adaptive scaling (ramps from M=0.3 to 0.9)
-        mach_scale = np.clip((self.Mach - 0.3)/0.6, 0.0, 1.0)  # 0.3→0, 0.9→1
-        
-        # 4e. Pressure jump calculation
-        raw_pressure_jump = (self.delta_p / q_inf) * disk_influence * mach_scale
-        
-        # 4f. Safety clamping (based on experimental BLI data)
-        MAX_CP_JUMP = 0.35  # Empirical limit for attached flow
-        pressure_jump = np.clip(raw_pressure_jump, -MAX_CP_JUMP, MAX_CP_JUMP)
-        
-        # 5. Apply pressure modification --------------------------------------------
-        Cp_compressible += pressure_jump
-
         return Cp_incompressible, Cp_compressible
     
     def compute_pressure_gradient(self):
@@ -614,9 +577,6 @@ class Flow_around_fuselage:
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-
-
-
     def solve_boundary_layer(self):
         dp_dx = self.compute_pressure_gradient()
         nu = self.mu / self.rho
@@ -649,6 +609,185 @@ class Flow_around_fuselage:
         self.delta_star = self._compute_displacement_thickness()
         self.tau_wall = self._compute_wall_shear_stress()
 
+    def _boundary_layer_ode_system(self, x, y, dp_dx):
+        """ODE system for boundary layer development with BLI suction effects."""
+        theta, delta_99 = y
+        eps = 1e-10  # Avoid division by zero
+        R_min = 0.5  # Minimum fuselage radius [m]
+
+        # Get local flow parameters
+        U_e = self.net_velocity_calcutaion(x)
+        idx = np.clip(np.searchsorted(self.x, x), 1, len(self.x)-2)
+
+        # Calculate velocity gradient dU_e/dx using central differences
+        if idx == 0:
+            dU_e_dx = (self.net_velocity_calcutaion(self.x[1]) - U_e) / (self.x[1] - self.x[0])
+        elif idx == len(self.x)-1:
+            dU_e_dx = (U_e - self.net_velocity_calcutaion(self.x[-2])) / (self.x[-1] - self.x[-2])
+        else:
+            U_e_plus = self.net_velocity_calcutaion(self.x[idx+1])
+            U_e_minus = self.net_velocity_calcutaion(self.x[idx-1])
+            dU_e_dx = (U_e_plus - U_e_minus) / (self.x[idx+1] - self.x[idx-1])
+
+        # Geometry parameters with stabilization
+        R = np.maximum(self.R[idx], R_min)
+        dR_dx = (
+            (self.R[idx+1] - self.R[idx-1]) 
+            / (self.x[idx+1] - self.x[idx-1])
+            if (0 < idx < (len(self.x) - 1)) 
+            else 0.0
+        )
+
+        # Flow regime parameters
+        Re_x = self.rho * U_e * x / (self.mu + eps)
+        Cf = self.compute_skin_friction(idx)
+        H = 2.59 if Re_x < 5e5 else 1.29  # Shape factor
+
+        # Base momentum thickness equation
+        momentum_term = (theta / (self.rho * (U_e**2 + eps))) * (
+            (H + 2) * dp_dx[idx] - self.rho * U_e * dU_e_dx * theta
+        )
+        geometry_term = (theta / R) * dR_dx
+        dtheta_dx_base = (Cf / 2) + momentum_term - geometry_term
+
+        # Base delta_99 equation
+        if Re_x < 5e5:  # Laminar
+            ddelta99_dx_base = 5.0 * dtheta_dx_base - (delta_99 / R) * dR_dx
+        else:  # Turbulent
+            ddelta99_dx_base = (delta_99 / theta) * dtheta_dx_base - (delta_99 / R) * dR_dx
+
+        # BLI Suction Effect (only when propulsor is active)
+        if self.disk_active:
+            x_rel = x - self.propulsor_position
+            suction_effect = self.suction_strength * (
+                (x_rel < 0) * np.exp(-x_rel**2/(2*self.suction_width**2)) + 
+                (x_rel >= 0) * np.exp(-x_rel**2/(2*self.recovery_width**2))
+            )
+        else:
+            suction_effect = 0.0
+
+        # Apply BLI modifications
+        dtheta_dx = dtheta_dx_base * (1 - suction_effect)
+        ddelta99_dx = ddelta99_dx_base * (1 - 0.8 * suction_effect)
+
+        return [dtheta_dx, ddelta99_dx]
+
+
+    def plot_boundary_layer_thickness(self, canvas_frame):
+        """Plot boundary layer thickness for both cases."""
+        for widget in canvas_frame.winfo_children():
+            widget.destroy()
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        # Plot fuselage geometry
+        ax.plot(self.x, self.y_upper, 'k', linewidth=2, label='Fuselage')
+        ax.plot(self.x, self.y_lower, 'k', linewidth=2)
+        ax.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
+
+        # Set aspect ratio and limits
+        ax.set_aspect(0.5)
+        y_max = max(self.y_upper) * 1.1
+        ax.set_ylim(-y_max, y_max)
+
+        # Get results
+        results_without = self.results_without_propulsor
+        results_with = self.results_with_propulsor
+
+        # Calculate boundary layer visualization parameters
+        dy_dx = np.gradient(self.y_upper, self.x)
+        theta = np.arctan(dy_dx)
+        exaggeration_factor = 20
+
+        delta_normal_with = results_with["delta_99"] * np.cos(theta) * exaggeration_factor
+        delta_normal_without = results_without["delta_99"] * np.cos(theta) * exaggeration_factor
+
+        # Plot WITH propulsor first
+        ax.fill_between(
+            self.x, 
+            self.y_upper + delta_normal_with, 
+            self.y_upper, 
+            color='red', alpha=0.5, 
+            label='δ99 (With Propulsor)'
+        )
+        
+        # Plot WITHOUT propulsor second
+        ax.fill_between(
+            self.x, 
+            self.y_upper + delta_normal_without, 
+            self.y_upper, 
+            color='blue', alpha=0.3, 
+            label='δ99 (Without Propulsor)'
+        )
+        prop_idx = np.argmin(np.abs(self.x - self.propulsor_position))
+        ax.plot(self.x[prop_idx], self.y_upper[prop_idx], 'o',
+            markersize=10, markerfacecolor='none',
+            markeredgecolor='red', markeredgewidth=2,
+            label='BLI Propulsor')
+
+        # Add BLI effect zone highlighting
+        ax.axvspan(self.propulsor_position - self.suction_width,
+                self.propulsor_position + self.recovery_width,
+                color='orange', alpha=0.15,
+                label='BLI Influence Zone')
+
+        # Twin axis for absolute values
+        ax2 = ax.twinx()
+        line_without, = ax2.plot(
+            results_without["x"], 
+            results_without["delta_99"],  # No exaggeration
+            'b--', 
+            label='δ99 Without Propulsor'
+        )
+        line_with, = ax2.plot(
+            results_with["x"], 
+            results_with["delta_99"],  # No exaggeration
+            'r--', 
+            label='δ99 With Propulsor'
+        )
+        ax2.set_ylabel('Absolute Boundary Layer Thickness [m]', color='k')
+
+        # Configure axes
+        ax.set_xlabel('Axial Position [m]')
+        ax.set_ylabel('Vertical Position [m]')
+        ax.set_title('Boundary Layer Development Comparison')
+        ax.grid(True)
+
+        # Legend and hover
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, 
+                loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=3)
+
+        def on_hover(sel):
+            x_val = sel.target[0]
+            idx_without = np.argmin(np.abs(results_without["x"] - x_val))
+            idx_with = np.argmin(np.abs(results_with["x"] - x_val))
+            sel.annotation.set_text(
+                f"x: {x_val:.2f}m\n"
+                f"Without: {results_without['delta_99'][idx_without]:.3f}m\n"
+                f"With: {results_with['delta_99'][idx_with]:.3f}m"
+            )
+
+        cursor = mplcursors.cursor([line_without, line_with], hover=True)
+        cursor.connect("add", on_hover)
+
+        # Metrics
+        metrics_text = (
+            f"Net Thrust: {self.T_net:.2f} N\n"
+            f"Drag Reduction: {self.D_red:.2f} N\n"
+            f"PSC: {self.PSC:.1%}"
+        )
+        ax.text(0.02, 0.95, metrics_text, transform=ax.transAxes,
+            fontsize=12, bbox=dict(facecolor='wheat', alpha=0.5))
+
+        # Final rendering
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        canvas.draw()
+        NavigationToolbar2Tk(canvas, canvas_frame).pack(side=tk.TOP, fill=tk.X)
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
 
     def boundary_layer_velocity_profile(self, x_pos, y):
         """
@@ -713,44 +852,7 @@ class Flow_around_fuselage:
             Cf = 0.027 / (Re_x ** (1/7))   
         return Cf
 
-    def _boundary_layer_ode_system(self, x, y, dp_dx):
-        theta, delta_99 = y
-        eps = 1e-10  # Small constant to avoid division by zero
-        R_min = 0.1  # Minimum radius threshold 
 
-        # Get local U_e from potential flow solution
-        U_e = self.net_velocity_calcutaion(x)
-        
-        # Calculate dU_e/dx using central differences
-        idx = np.clip(np.searchsorted(self.x, x), 1, len(self.x)-2)
-        if idx == 0:
-            dU_e_dx = (self.net_velocity_calcutaion(self.x[1]) - U_e) / (self.x[1] - self.x[0])
-        elif idx == len(self.x)-1:
-            dU_e_dx = (U_e - self.net_velocity_calcutaion(self.x[-2])) / (self.x[-1] - self.x[-2])
-        else:
-            dU_e_dx = (self.net_velocity_calcutaion(self.x[idx+1]) - self.net_velocity_calcutaion(self.x[idx-1])) / (self.x[idx+1] - self.x[idx-1])
-
-        # Geometry parameters
-        R = np.maximum(self.R[idx], R_min)  # Prevent division by small R
-        dR_dx = (self.R[idx+1] - self.R[idx-1]) / (self.x[idx+1] - self.x[idx-1]) if 0 < idx < len(self.x)-1 else 0.0
-
-        # Flow regime parameters
-        Re_x = self.rho * U_e * x / (self.mu + eps)
-        Cf = self.compute_skin_friction(idx)
-        H = 2.59 if Re_x < 5e5 else 1.29  # Shape factor
-
-        # Momentum thickness equation (axisymmetric) - Modified with dU_e/dx
-        momentum_term = (theta / (self.rho * (U_e**2 + eps))) * ((H + 2) * dp_dx[idx] - self.rho * U_e * dU_e_dx * theta)
-        geometry_term = (theta / R) * dR_dx
-        dtheta_dx = (Cf / 2) + momentum_term - geometry_term
-
-        # Delta99 equation based on empirical thickness ratios
-        if Re_x < 5e5:  # Laminar
-            ddelta99_dx = 5.0 * dtheta_dx - (delta_99 / R) * dR_dx
-        else:  # Turbulent
-            ddelta99_dx = (delta_99 / theta) * dtheta_dx - (delta_99 / R) * dR_dx
-
-        return [dtheta_dx, ddelta99_dx]
     
     def _compute_displacement_thickness(self):
         H = np.where(self.Re_x < 5e5, 2.59, 1.29)
@@ -764,193 +866,68 @@ class Flow_around_fuselage:
             tau_wall[i] = Cf * 0.5 * self.rho * self.free_stream_velocity**2  #  https://youtu.be/x_VhWhmJqrI  
         return tau_wall
 
-    def plot_boundary_layer_thickness(self, canvas_frame):
-        """Plot boundary layer thickness for both cases."""
-        
-        for widget in canvas_frame.winfo_children():
-            widget.destroy()
-
-        fig, ax = plt.subplots(figsize=(12, 6))
-
-        # Plot fuselage geometry with consistent style
-        ax.plot(self.x, self.y_upper, 'k', linewidth=2, label='Fuselage')
-        ax.plot(self.x, self.y_lower, 'k', linewidth=2)
-        ax.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
-
-        # Set aspect ratio for proper slenderness
-        ax.set_aspect(0.5)
-
-        # Align zero points symmetrically
-        y_max = max(self.y_upper) * 1.1
-        ax.set_ylim(-y_max, y_max)
-
-        # Boundary layer calculations
-        results_without = self.results_without_propulsor
-        results_with = self.results_with_propulsor
-
-        dy_dx = np.gradient(self.y_upper, self.x)
-        theta = np.arctan(dy_dx)
-        delta_normal_without = results_without["delta_99"] * np.cos(theta)
-        delta_normal_with = results_with["delta_99"] * np.cos(theta)
-
-        # Exaggerate boundary layer thickness for visibility
-        exaggeration_factor = 20  # Adjust this factor to control the exaggeration
-        delta_normal_without *= exaggeration_factor
-        delta_normal_with *= exaggeration_factor
-
-        # Plot boundary layer thickness (preserve original colors and alpha)
-        ax.fill_between(
-            self.x, 
-            self.y_upper + delta_normal_without, 
-            self.y_upper, 
-            color='blue', alpha=0.3, 
-            label='δ99 (Without Propulsor)'
-        )
-        ax.fill_between(
-            self.x, 
-            self.y_upper + delta_normal_with, 
-            self.y_upper, 
-            color='red', alpha=0.3, 
-            label='δ99 (With Propulsor)'
-        )
-
-        # Create twin axis for absolute boundary layer thickness
-        ax2 = ax.twinx()
-        line_without, = ax2.plot(
-            results_without["x"], 
-            results_without["delta_99"] * exaggeration_factor,  # Exaggerate here too
-            'b--', 
-            label='δ99 Without Propulsor'
-        )
-        line_with, = ax2.plot(
-            results_with["x"], 
-            results_with["delta_99"] * exaggeration_factor,  # Exaggerate here too
-            'r--', 
-            label='δ99 With Propulsor'
-        )
-        ax2.set_ylabel('Absolute Boundary Layer Thickness [m]', color='k')
- 
-        # Configure axes and labels
-        ax.set_xlabel('Axial Position [m]')
-        ax.set_ylabel('Vertical Position [m]')
-        ax.set_title('Boundary Layer Development Comparison ')
-        ax.grid(True)
-
-        # Create combined legend
-        lines1, labels1 = ax.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper center', 
-                bbox_to_anchor=(0.5, -0.15), ncol=3)
-
-        # Hover functionality  
-        def on_hover(sel):
-            x_val = sel.target[0]
-            idx_without = np.argmin(np.abs(results_without["x"] - x_val))
-            idx_with = np.argmin(np.abs(results_with["x"] - x_val))
-            
-            sel.annotation.set_text(
-                f"x: {x_val:.2f} m\n"
-                f"δ99 (Without): {results_without['delta_99'][idx_without]:.3f} m\n"
-                f"δ99 (With): {results_with['delta_99'][idx_with]:.3f} m"
-            )
-
-        cursor = mplcursors.cursor([line_without, line_with], hover=True)
-        cursor.connect("add", on_hover)
-
-        # Metrics text box  
-        T_net = self.compute_net_thrust()
-        D_red = self.compute_drag_reduction()
-        PSC = self.compute_PSC()
-        metrics_text = (
-            f"Net Thrust: {T_net:.2f} N\n"
-            f"Drag Reduction: {D_red:.2f} N\n"
-            f"PSC: {PSC:.1%}"
-        )
-        ax.text(
-            0.02, 0.95,
-            metrics_text,
-            transform=ax.transAxes,
-            fontsize=12,
-            verticalalignment='top',
-            horizontalalignment='left',
-            bbox=dict(facecolor='wheat', alpha=0.5, edgecolor='black', boxstyle='round')
-        )
-
-        # Final layout adjustments
-        fig.tight_layout()
-
-        # Embed the figure and add toolbar
-        canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
-        canvas_widget = canvas.get_tk_widget()
-        
-        # Add navigation toolbar (zoom/pan)
-        toolbar = NavigationToolbar2Tk(canvas, canvas_frame)
-        toolbar.update()
-        toolbar.pack(side=tk.TOP, fill=tk.X)
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
-        canvas.draw()
-        
     def run_simulation(self):
-        """Original functionality maintained with delta_p from NacelleParameters"""
-        # Case 1: Without propulsor  
+        """Run simulation with proper BLI state management and metric calculation"""
+        # Case 1: Without propulsor
         self.disk_active = False
+        self._reset_boundary_layer()
         self.solve_boundary_layer()
         self.results_without_propulsor = {
             "x": self.x.copy(),
             "delta_99": self.delta_99.copy(),
-            "delta_star": self.delta_star.copy(),
-            "theta": self.theta.copy(),
-            "Cp": self.pressure_distribution()[1].copy()
+            "theta": self.theta.copy()
         }
 
-        # Case 2: With propulsor  
+        # Case 2: With propulsor
         self.disk_active = True
+        self._reset_boundary_layer()
         
-        # Get local velocity at propulsor  
-        v_local = self.get_local_velocity_at_propulsor()   
-    
-        
-        # Update nacelle parameters to calculate delta_p  
+        # Update propulsion parameters with BLI effects
+        v_local = self.get_local_velocity_at_propulsor()
         self.nacelle.v_inlet = v_local
-
-        # Get ALL returned parameters as a list
-        all_params = self.nacelle.variable_parameters(
-            rho=self.rho,
-            p=self.p
-        )
-
-          
-        self.delta_p = all_params[-1]  
+        
+        # Get updated nacelle parameters
         nacelle_params = self.nacelle.variable_parameters(rho=self.rho, p=self.p)
-        v_disk = nacelle_params[5]   
-
-        self.nacelle.v_inlet = v_local
+        self.delta_p = nacelle_params[10]  # Pressure jump
+        v_disk = nacelle_params[5]         # Disk velocity
+        
+        # Reinitialize actuator disk with BLI parameters
         self.actuator_disk = ActuatorDiskModel(
             rho=self.rho,
             A_effective=self.effective_A_disk,
-            v_inlet=self.get_local_velocity_at_propulsor(),   
+            v_inlet=v_local,
             v_disk=v_disk,
             eta_disk=self.eta_disk,
             eta_motor=self.eta_motor,
             eta_prop=self.eta_prop
         )
-         
-        self.solve_boundary_layer()
         
-         
+        # Solve boundary layer with BLI effects
+        self.solve_boundary_layer()
         self.results_with_propulsor = {
             "x": self.x.copy(),
             "delta_99": self.delta_99.copy(),
-            "delta_star": self.delta_star.copy(),
-            "theta": self.theta.copy(),
-            "Cp": self.pressure_distribution()[1].copy()
+            "theta": self.theta.copy()
         }
 
-        
+        # Calculate performance metrics
         self.T_net = self.compute_net_thrust()
         self.D_red = self.compute_drag_reduction()
         self.PSC = self.compute_PSC()
+
+    def _reset_boundary_layer(self):
+        """Reset boundary layer arrays to initial state"""
+        self.delta_99 = np.zeros_like(self.x)
+        self.theta = np.zeros_like(self.x)
+        self.delta_star = np.zeros_like(self.x)
+        self.tau_wall = np.zeros_like(self.x)
         
+
+
+
+
+
+
     def activate_propulsor(self):
         """Activate the propulsor and update the boundary layer solution."""
         self.disk_active = True
@@ -993,7 +970,6 @@ class Flow_around_fuselage:
         # Original boundary layer drag difference
         D_prime_noBLI = self.rho * self.free_stream_velocity**2 * self.results_without_propulsor["theta"]
         D_prime_BLI = self.rho * self.free_stream_velocity**2 * self.results_with_propulsor["theta"]
-        
         # Integrate around circumference and along fuselage
         D_noBLI = np.trapz(D_prime_noBLI * 2 * np.pi * self.R, self.x)
         D_BLI = np.trapz(D_prime_BLI * 2 * np.pi * self.R, self.x)
@@ -1015,10 +991,9 @@ class Flow_around_fuselage:
         # Base drag values
         D_prime_noBLI = self.rho * self.free_stream_velocity**2 * self.results_without_propulsor["theta"]
         D_prime_BLI = self.rho * self.free_stream_velocity**2 * self.results_with_propulsor["theta"]
-        
         # Integrate around circumference and along fuselage
         D_NoBLI = np.trapz(D_prime_noBLI * 2 * np.pi * self.R, self.x)
-        D_BLI = np.trapz(D_prime_BLI * 2 * np.pi * self.R, self.x)
+        D_BLI = np.trapz(D_prime_BLI * 2 * np.pi * self.R, self.x)   
 
         # Engine drag components
         v_local = self.get_local_velocity_at_propulsor()
