@@ -231,7 +231,7 @@ class Flow_around_fuselage:
         disk_radius = math.sqrt(A_disk / math.pi)  # Disk Radius (m)
         self.disk_radius = disk_radius
         self.nacelle_length = nacelle_length
-        self.delta_p = delta_p     # Delta P / Recheck the logic !!!!
+        self.delta_p = delta_p    
         self.fuselage_length = 38
         self.fuselage_radius = 2.0    
         self.nose_length = 3.0
@@ -246,7 +246,6 @@ class Flow_around_fuselage:
         self.D_red = 0.0
         self.PSC = 0.0
         
-        #Engine Suction Parameters
         # BLI Control Parameters
         self.suction_strength = 0.35       # 0.2-0.3 typical for BLI
         self.suction_width = 1.80 * self.disk_radius    # Upstream influence
@@ -256,7 +255,7 @@ class Flow_around_fuselage:
 
         if self.Mach >= 1:
             raise ValueError("The model is invalid for Mach ≥ 1")
-        if self.Mach < 0.3:  # Incompressible flow
+        if self.Mach < 0.3:  
             raise ValueError("The model is invalid for Mach < 0.3")
 
         # Geometry creation 
@@ -266,7 +265,7 @@ class Flow_around_fuselage:
         self.y_upper = np.zeros(N)
         self.y_lower = np.zeros(N)
   
-        for i, xi in enumerate(self.x): #Approximate aircraft geometry
+        for i, xi in enumerate(self.x): #Approximate aircraft geometry / https://www.pprune.org/11048890-post3.html
             if xi <= self.nose_length:
                 y = self.fuselage_radius * (1 - ((xi - self.nose_length)/self.nose_length)**2)
                 self.y_upper[i] = y
@@ -301,14 +300,12 @@ class Flow_around_fuselage:
         self.eta_motor = eta_motor
         self.eta_prop = eta_prop
         self.eta_total = eta_motor * eta_prop * eta_disk
-       
- 
-        
+
         self.actuator_disk = ActuatorDiskModel(
             rho=self.rho,
             A_effective=self.effective_A_disk,
-            v_inlet=self.free_stream_velocity,  # From freestream
-            v_disk=v_disk,                      # From nacelle calculation
+            v_inlet=self.free_stream_velocity,  
+            v_disk=v_disk,                 
             eta_disk=eta_disk,
             eta_motor=eta_motor,
             eta_prop=eta_prop
@@ -330,32 +327,30 @@ class Flow_around_fuselage:
         self.results_without_propulsor = None
 
     def source_strength_thin_body(self):
+        """Calculate source strength distribution for thin body approximation."""
         dr2_dx = np.zeros_like(self.x)
 
-        
+        # Compressibility factor (Prandtl-Glauert correction)
+        beta = np.sqrt(1 - self.Mach**2) if self.Mach >= 0.3 else 1.0  #https://en.wikipedia.org/wiki/Prandtl%E2%80%93Glauert_transformation
+
         for i, xi in enumerate(self.x):
-            if self.Mach < 0.3:  # Incompressible flow
-                if xi <= self.nose_length:
-                    term = (xi - self.nose_length) / self.nose_length
-                    dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.nose_length)
-                elif xi >= self.fuselage_length - self.tail_length:
-                    x_tail = xi - (self.fuselage_length - self.tail_length)
-                    term = x_tail / self.tail_length
-                    dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term / self.tail_length)
-                else:
-                    dr2_dx[i] = 0.0
-            else:  # Compressible flow
-                if xi <= self.nose_length:
-                    term = (xi - self.nose_length) / self.nose_length
-                    dr2_dx[i] = 2 * (self.fuselage_radius * np.sqrt(1 - self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.nose_length) #Prandtl Glauert Correction # https://jamesbrind.uk/posts/prandtl-glauert/
-                elif xi >= self.fuselage_length - self.tail_length:
-                    x_tail = xi - (self.fuselage_length - self.tail_length)
-                    term = x_tail / self.tail_length
-                    dr2_dx[i] = 2 * (self.fuselage_radius * np.sqrt(1 - self.Mach**2))**2 * (1 - term**2) * (-2 * term / self.tail_length)
-                else:
-                    dr2_dx[i] = 0.0
+            if xi <= self.nose_length:
+                # Nose section
+                term = (xi - self.nose_length) / self.nose_length
+                dr2_dx[i] = 2 * (self.fuselage_radius * beta)**2 * (1 - term**2) * (-2 * term / self.nose_length)
+            elif xi >= self.fuselage_length - self.tail_length:
+                # Tail section
+                x_tail = xi - (self.fuselage_length - self.tail_length)
+                term = x_tail / self.tail_length
+                dr2_dx[i] = 2 * (self.fuselage_radius * beta)**2 * (1 - term**2) * (-2 * term / self.tail_length)
+            else:
+                # Cylindrical section
+                dr2_dx[i] = 0.0
+
         return self.free_stream_velocity * np.pi * dr2_dx # QUASI ANALYTICAL AERODYNAMIC METHODS FOR PROPULSIVE FUSELAGE CONCEPTS / https://www.bauhaus-luftfahrt.net/fileadmin/user_upload/Publikationen/2014-09-08_ICAS_Kaiser_Quasi-Analytical_Aerodynamic_Methods_for_Propulsive_Fuselage_Concepts_X.pdf
     
+            
+     
     def plot_source_strength(self, canvas_frame):
         # Create figure and axis
         fig, ax1 = plt.subplots(figsize=(12, 4))
@@ -731,7 +726,7 @@ class Flow_around_fuselage:
             color='black',
             linestyle='--',
             linewidth=1.5,
-            label='Propulsor Diameter'
+            label='Propulsor Location'
         )
 
         # Twin axis for absolute values
