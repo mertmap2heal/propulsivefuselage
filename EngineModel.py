@@ -259,7 +259,7 @@ class Flow_around_fuselage:
             raise ValueError("The model is invalid for Mach < 0.3")
 
         # Geometry creation 
-        N = 1500
+        N = 1000
         self.x = np.linspace(0, self.fuselage_length, N)
         self.Re_x = self.rho * self.free_stream_velocity * self.x / self.mu
         self.y_upper = np.zeros(N)
@@ -401,6 +401,7 @@ class Flow_around_fuselage:
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def velocity_components_around_fuselage(self, X, Y, apply_mask=True):
+        #https://ocw.mit.edu/courses/2-016-hydrodynamics-13-012-fall-2005/c472432debcf6ee250209b68cf18cc12_2005reading4.pdf
         U = np.full(X.shape, self.free_stream_velocity, dtype=np.float64) # Free stream velocity + U from the source
         V = np.zeros(Y.shape, dtype=np.float64)
         for i in range(len(self.x)):
