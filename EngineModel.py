@@ -433,7 +433,6 @@ class Flow_around_fuselage:
     def plot_velocity_streamlines(self, canvas_frame):
         for widget in canvas_frame.winfo_children():
             widget.destroy()
-            
         x = np.linspace(-10, self.fuselage_length + 10, 100)
         y = np.linspace(-10, 10, 100)
         X, Y = np.meshgrid(x, y)
@@ -482,10 +481,10 @@ class Flow_around_fuselage:
         # 2. Velocity magnitude ratio (V/V∞)
         velocity_ratio = np.sqrt(U**2 + V**2) / self.free_stream_velocity
         
-        # 3. Incompressible Cp (Bernoulli's equation)
+        # 3. Incompressible Cp (Bernoulli's equation) , https://en.wikipedia.org/wiki/Pressure_coefficient
         Cp_incompressible = 1 - velocity_ratio**2
         
-        # 4. Compressibility correction (Prandtl-Glauert)
+        # 4. Compressibility correction (Prandtl-Glauert) , https://de.wikipedia.org/wiki/Prandtl-Glauert-Transformation
         Cp_compressible = Cp_incompressible / np.sqrt(1 - self.Mach**2)
         
         return Cp_incompressible, Cp_compressible
