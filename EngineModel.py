@@ -242,6 +242,9 @@ class Flow_around_fuselage:
         self.p = p
         self.mu = mu
         self.propulsor_position = propulsor_position
+        self.T_net = 0.0
+        self.D_red = 0.0
+        self.PSC = 0.0
         
         #Engine Suction Parameters
         # BLI Control Parameters
@@ -422,7 +425,7 @@ class Flow_around_fuselage:
                 V[x_mask & y_mask] = np.nan
         return U, V
     
-    def net_velocity_calcutaion(self, x_pos):
+    def net_velocity_calculation(self, x_pos):
         idx = np.argmin(np.abs(self.x - x_pos))
         U, V = self.velocity_components_around_fuselage(
             self.x[idx], 
@@ -494,7 +497,7 @@ class Flow_around_fuselage:
     def compute_pressure_gradient(self):
         """Compute the pressure coefficient gradient, including a broader propulsor effect."""
          
-        U_e_array = np.array([self.net_velocity_calcutaion(xi) for xi in self.x])
+        U_e_array = np.array([self.net_velocity_calculation(xi) for xi in self.x])
         q = 0.5 * self.rho * U_e_array**2  
         
         _, Cp_compressible = self.pressure_distribution()
@@ -616,32 +619,32 @@ class Flow_around_fuselage:
         R_min = 0.5  # Minimum fuselage radius [m]
 
         # Get local flow parameters
-        U_e = self.net_velocity_calcutaion(x)
+        U_e = self.net_velocity_calculation(x)
         idx = np.clip(np.searchsorted(self.x, x), 1, len(self.x)-2)
 
         # Calculate velocity gradient dU_e/dx using central differences
         if idx == 0:
-            dU_e_dx = (self.net_velocity_calcutaion(self.x[1]) - U_e) / (self.x[1] - self.x[0])
+            U_e_plus = self.net_velocity_calculation(self.x[1])
+            dU_e_dx = (U_e_plus - U_e) / (self.x[1] - self.x[0])
         elif idx == len(self.x)-1:
-            dU_e_dx = (U_e - self.net_velocity_calcutaion(self.x[-2])) / (self.x[-1] - self.x[-2])
+            U_e_minus = self.net_velocity_calculation(self.x[-2])
+            dU_e_dx = (U_e - U_e_minus) / (self.x[-1] - self.x[-2])
         else:
-            U_e_plus = self.net_velocity_calcutaion(self.x[idx+1])
-            U_e_minus = self.net_velocity_calcutaion(self.x[idx-1])
+            U_e_plus = self.net_velocity_calculation(self.x[idx+1])
+            U_e_minus = self.net_velocity_calculation(self.x[idx-1])
             dU_e_dx = (U_e_plus - U_e_minus) / (self.x[idx+1] - self.x[idx-1])
 
         # Geometry parameters with stabilization
         R = np.maximum(self.R[idx], R_min)
-        dR_dx = (
-            (self.R[idx+1] - self.R[idx-1]) 
-            / (self.x[idx+1] - self.x[idx-1])
-            if (0 < idx < (len(self.x) - 1)) 
-            else 0.0
-        )
+        if (0 < idx < (len(self.x) - 1)):
+            dR_dx = (self.R[idx+1] - self.R[idx-1]) / (self.x[idx+1] - self.x[idx-1])
+        else:
+            dR_dx = 0.0
 
         # Flow regime parameters
         Re_x = self.rho * U_e * x / (self.mu + eps)
         Cf = self.compute_skin_friction(idx)
-        H = 2.59 if Re_x < 5e5 else 1.29  # Shape factor
+        H = 2.59 if Re_x < 5e5 else 1.29  # Your original shape factor
 
         # Base momentum thickness equation
         momentum_term = (theta / (self.rho * (U_e**2 + eps))) * (
@@ -655,23 +658,20 @@ class Flow_around_fuselage:
             ddelta99_dx_base = 5.0 * dtheta_dx_base - (delta_99 / R) * dR_dx
         else:  # Turbulent
             ddelta99_dx_base = (delta_99 / theta) * dtheta_dx_base - (delta_99 / R) * dR_dx
-
-        # BLI Suction Effect (only when propulsor is active)
+ 
         if self.disk_active:
             x_rel = x - self.propulsor_position
             suction_effect = self.suction_strength * (
                 (x_rel < 0) * np.exp(-x_rel**2/(2*self.suction_width**2)) + 
-                (x_rel >= 0) * np.exp(-x_rel**2/(2*self.recovery_width**2))
-            )
+                (x_rel >= 0) * np.exp(-x_rel**2/(2*self.recovery_width**2)) )
         else:
             suction_effect = 0.0
 
-        # Apply BLI modifications
+        # Apply your original suction modification
         dtheta_dx = dtheta_dx_base * (1 - suction_effect)
         ddelta99_dx = ddelta99_dx_base * (1 - 0.8 * suction_effect)
 
         return [dtheta_dx, ddelta99_dx]
-
 
     def plot_boundary_layer_thickness(self, canvas_frame):
         """Plot boundary layer thickness for both cases."""
@@ -792,58 +792,69 @@ class Flow_around_fuselage:
     def boundary_layer_velocity_profile(self, x_pos, y):
         """
         Compute velocity at (x, y) considering boundary layer effects.
-        Uses a laminar profile if the local Reynolds number is below 5e5, otherwise applies the turbulent 1/7th power law.
+        Physical safeguards added for numerical stability.
         """
-        # Find the index corresponding to x_pos
+        # 1. Get edge velocity FIRST
+        U_e = self.net_velocity_calculation(x_pos)    
+        
+        # 2. Find boundary layer parameters
         idx = np.argmin(np.abs(self.x - x_pos))
-        delta_99 = self.delta_99[idx]
-        R_fuselage = self.R[idx]  
-        U_e = self.net_velocity_calcutaion(x_pos)  
+        delta_99 = max(self.delta_99[idx], 1e-6)  # Prevent division by zero
+        R_fuselage = self.R[idx]
         
-        # Convert radial y to wall-normal distance
-        y_wall = y - R_fuselage   
+        # 3. Calculate wall-normal distance with clamping
+        y_wall = y - R_fuselage
+        y_wall = np.clip(y_wall, 0.0, delta_99)  # Force 0 ≤ y_wall ≤ δ99
         
-        # If y is outside the boundary layer, return the edge velocity
-        if y_wall > delta_99 or y_wall < 0: 
-            return U_e
+        # 4. Handle invalid/reversed flow cases
+        if delta_99 < 1e-6 or y_wall < 0:
+            return 0.0  # No velocity inside structure
         
-        # Determine local Reynolds number at x_pos
+        # 5. Flow regime check
         Re_local = self.Re_x[idx]
         
-        if Re_local < 5e5:
-            # Laminar boundary layer  
-            return U_e * (2 * (y_wall / delta_99) - (y_wall / delta_99) ** 2)  
-        else:
-            # Turbulent boundary layer (1/7th power law with wall distance)
-            return U_e * (y_wall / delta_99) ** (1/7)  
+        if Re_local < 5e5:  # Laminar
+            return U_e * (2*(y_wall/delta_99) - (y_wall/delta_99)**2)
+        else:  # Turbulent
+            return U_e * (y_wall/delta_99)**(1/7)
     
 
     def get_local_velocity_at_propulsor(self):
-        """Compute mass-averaged velocity over the actuator disk area."""
-        # Get the index at the propulsor position (defined in __init__)
+        """Compute mass-averaged velocity over actuator disk area considering BL thickness."""
+        # Get propulsor parameters
         idx = np.argmin(np.abs(self.x - self.propulsor_position))
-        R_prop = self.y_upper[idx]  # Fuselage radius at the propulsor location
-        R_disk = self.disk_radius   # Outer radius of the disk
-
-        # Create radial coordinates for the annulus (from R_prop to R_disk)
-        r = np.linspace(R_prop, R_disk, 100)
+        R_prop = self.y_upper[idx]  # Fuselage radius
+        R_disk = self.disk_radius   # Propulsor outer radius
+        delta_99 = self.delta_99[idx]  # Boundary layer thickness
         
-        # Axial position at the disk is the propulsor position
+        # Effective integration limits
+        R_eff = min(R_prop + delta_99, R_disk)
         x_disk = self.propulsor_position
 
-        # Integrate the velocity over the disk using the boundary layer profile - Defined before
-        velocities = []
-        for y in r:
-            u = self.boundary_layer_velocity_profile(x_disk, y)
-            velocities.append(u)
+        # Case 1: Entire disk within boundary layer (δ99 > R_disk - R_prop)
+        if (R_prop + delta_99) >= R_disk:
+            r = np.linspace(R_prop, R_disk, 100)
+            velocities = [self.boundary_layer_velocity_profile(x_disk, y) for y in r]
         
-         
+        # Case 2: Disk extends beyond boundary layer
+        else:
+            # Boundary layer region
+            r_bl = np.linspace(R_prop, R_prop + delta_99, 50)
+            v_bl = [self.boundary_layer_velocity_profile(x_disk, y) for y in r_bl]
+            
+            # Freestream region
+            r_fs = np.linspace(R_prop + delta_99 + 1e-6, R_disk, 50)  # Avoid overlap
+            v_fs = [self.free_stream_velocity] * len(r_fs)
+            
+            r = np.concatenate([r_bl, r_fs])
+            velocities = np.concatenate([v_bl, v_fs])
+
+        # Mass-averaged velocity calculation
         numerator = np.trapz([u * r_i for u, r_i in zip(velocities, r)], r)
         denominator = 0.5 * (R_disk**2 - R_prop**2)
-        u_avg = (2 * numerator) / denominator  # Area-weighted average
         
-        return u_avg
-
+        return (2 * numerator) / denominator if denominator != 0 else 0.0
+    
     def compute_skin_friction(self, i):
         Re_x = self.Re_x[i]
         if Re_x < 5e5:  # Laminar (from https://fluidmech.onlineflowcalculator.com/White/Chapter7)
@@ -888,8 +899,8 @@ class Flow_around_fuselage:
         
         # Get updated nacelle parameters
         nacelle_params = self.nacelle.variable_parameters(rho=self.rho, p=self.p)
-        self.delta_p = nacelle_params[10]  # Pressure jump
-        v_disk = nacelle_params[5]         # Disk velocity
+        self.delta_p = nacelle_params[10]
+        v_disk = nacelle_params[5]
         
         # Reinitialize actuator disk with BLI parameters
         self.actuator_disk = ActuatorDiskModel(
@@ -910,7 +921,7 @@ class Flow_around_fuselage:
             "theta": self.theta.copy()
         }
 
-        # Calculate performance metrics
+        # MUST CALCULATE METRICS HERE BEFORE STORING RESULTS
         self.T_net = self.compute_net_thrust()
         self.D_red = self.compute_drag_reduction()
         self.PSC = self.compute_PSC()
@@ -922,11 +933,6 @@ class Flow_around_fuselage:
         self.delta_star = np.zeros_like(self.x)
         self.tau_wall = np.zeros_like(self.x)
         
-
-
-
-
-
 
     def activate_propulsor(self):
         """Activate the propulsor and update the boundary layer solution."""
@@ -965,6 +971,7 @@ class Flow_around_fuselage:
         
         return T_gross - (intake_drag + nacelle_drag)
      # Drag per unit span: D' = ρ U_e² θ  / https://www.youtube.com/watch?v=olqoce8ui5s&t=1447s re check this part
+    
     def compute_drag_reduction(self):
         """Drag reduction including engine installation drag"""
         # Original boundary layer drag difference
@@ -987,27 +994,37 @@ class Flow_around_fuselage:
         return (D_noBLI - D_BLI) - (intake_drag + nacelle_drag)
 
     def compute_PSC(self):
+        # Get required parameters
+        Vinf = self.free_stream_velocity
+        V_local = self.get_local_velocity_at_propulsor()
         
-        # Base drag values
-        D_prime_noBLI = self.rho * self.free_stream_velocity**2 * self.results_without_propulsor["theta"]
-        D_prime_BLI = self.rho * self.free_stream_velocity**2 * self.results_with_propulsor["theta"]
-        # Integrate around circumference and along fuselage
-        D_NoBLI = np.trapz(D_prime_noBLI * 2 * np.pi * self.R, self.x)
-        D_BLI = np.trapz(D_prime_BLI * 2 * np.pi * self.R, self.x)   
+        # 1. Calculate drag terms
+        D_NoBLI = np.trapz(
+            self.rho * Vinf**2 * self.results_without_propulsor["theta"] * 2 * np.pi * self.R,
+            self.x
+        )
+        
+        D_BLI = np.trapz(
+            self.rho * Vinf**2 * self.results_with_propulsor["theta"] * 2 * np.pi * self.R,  
+            self.x
+        )
 
-        # Engine drag components
-        v_local = self.get_local_velocity_at_propulsor()
-        q_inlet = 0.5 * self.rho * v_local**2
-        intake_drag = q_inlet * (self.nacelle.A_inlet - self.effective_A_disk)
-        inlet_radius = math.sqrt(self.nacelle.A_inlet / math.pi)
-        wetted_area = 2 * math.pi * inlet_radius * self.nacelle_length
-        nacelle_drag = 0.5 * self.rho * self.free_stream_velocity**2 * (0.02 * self.nacelle.A_inlet + 0.002 * wetted_area)
+        # 2. Calculate propulsion power requirements
+        T_net = self.compute_net_thrust()
         
+        # Conventional propulsion power (non-BLI reference)
+        T_conv = D_NoBLI  # Thrust needed to overcome drag without BLI
+        P_conv = (T_conv * Vinf) / (0.8)  # Assuming separate η
         
-        P_NonBLI = D_NoBLI * self.free_stream_velocity
-        P_BLI = (D_BLI + intake_drag + nacelle_drag) * v_local / 0.9
+        # BLI propulsion power
+        P_BLI_prop = (T_net * V_local) / self.eta_total
         
-        return (P_NonBLI - P_BLI) / P_NonBLI if P_NonBLI != 0 else 0.0
+        # 3. Total power calculations
+        P_NonBLI = D_NoBLI * Vinf + P_conv 
+        P_BLI = D_BLI * Vinf + P_BLI_prop
+        
+        # 4. Final PSC
+        return (P_NonBLI - P_BLI) / P_NonBLI
 
 
 class ActuatorDiskModel:
