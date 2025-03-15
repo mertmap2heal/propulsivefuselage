@@ -490,15 +490,21 @@ class Flow_around_fuselage:
         return Cp_incompressible, Cp_compressible
     
     def compute_pressure_gradient(self):
-        """Compute the pressure coefficient gradient, including a broader propulsor effect."""
-         
-        U_e_array = np.array([self.net_velocity_calculation(xi) for xi in self.x])
-        q = 0.5 * self.rho * U_e_array**2  
-        
-        _, Cp_compressible = self.pressure_distribution()
-        dCp_dx = np.gradient(Cp_compressible, self.x)
-        dp_dx = -q * dCp_dx  
-        return dp_dx
+            # Equation 11:
+            # https://www.grc.nasa.gov/www/k-12/VirtualAero/BottleRocket/airplane/conmo508.html
+            # https://aerodynamics4students.com/subsonic-aerofoil-and-wing-theory/2d-boundary-layer-modelling.php
+            """Compute pressure gradient using inviscid Euler equation.
+            """
+            # 1. Get edge velocity array
+            U_e = np.array([self.net_velocity_calculation(xi) for xi in self.x])
+            
+            # 2. Compute velocity gradient
+            dU_e_dx = np.gradient(U_e, self.x)  # Central differences
+            
+            # 3. Euler equation: dp/dx = -ρ U_e (dU_e/dx) 
+            dp_dx = -self.rho * U_e * dU_e_dx
+            
+            return dp_dx
 
 
     def plot_pressure_distribution(self, canvas_frame):
@@ -506,9 +512,7 @@ class Flow_around_fuselage:
             widget.destroy()
             
         Cp_incompressible, Cp_compressible = self.pressure_distribution()  
-        
         fig, ax1 = plt.subplots(figsize=(12, 6))
-        
         # Plot pressure coefficients
         line_incomp, = ax1.plot(self.x, Cp_incompressible, 'b', label='Incompressible Cp')
         line_comp, = ax1.plot(self.x, Cp_compressible, 'r', label='Compressible Cp')
