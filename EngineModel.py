@@ -223,7 +223,7 @@ class EngineMassEstimation:
 class Flow_around_fuselage:
     def __init__(self, v_freestream, Mach, rho, mu, delta_p, A_inlet, p,
                 propulsor_position=33.0, eta_disk=0.80, 
-                eta_motor=0.80, eta_prop=0.80, nacelle_length=3.0):
+                eta_motor=0.80, eta_prop=0.80, nacelle_length=5.0):
 
         
         self.A_inlet = A_inlet
@@ -690,46 +690,49 @@ class Flow_around_fuselage:
         y_max = max(self.y_upper) * 1.1
         ax.set_ylim(-y_max, y_max)
 
-        # Get results
-        results_without = self.results_without_propulsor
-        results_with = self.results_with_propulsor
+        # Get propulsor dimensions
+        idx = np.argmin(np.abs(self.x - self.propulsor_position))
+        prop_radius = self.y_upper[idx]  # Fuselage radius at propulsor location
+        disk_radius = self.disk_radius   # Propulsor outer radius
+
+        # Increased exaggeration factor
+        exaggeration_factor = 50  # Changed from 20 to 50
 
         # Calculate boundary layer visualization parameters
         dy_dx = np.gradient(self.y_upper, self.x)
         theta = np.arctan(dy_dx)
-        exaggeration_factor = 20
+        
+        results_without = self.results_without_propulsor
+        results_with = self.results_with_propulsor
 
         delta_normal_with = results_with["delta_99"] * np.cos(theta) * exaggeration_factor
         delta_normal_without = results_without["delta_99"] * np.cos(theta) * exaggeration_factor
 
-        # Plot WITH propulsor first
+        # Plot boundary layers with enhanced exaggeration
         ax.fill_between(
             self.x, 
             self.y_upper + delta_normal_with, 
             self.y_upper, 
             color='red', alpha=0.5, 
-            label='δ99 (With Propulsor)'
+            label='BL With Propulsor '
         )
-        
-        # Plot WITHOUT propulsor second
         ax.fill_between(
             self.x, 
             self.y_upper + delta_normal_without, 
             self.y_upper, 
             color='blue', alpha=0.3, 
-            label='δ99 (Without Propulsor)'
+            label='BL Without Propulsor '
         )
-        prop_idx = np.argmin(np.abs(self.x - self.propulsor_position))
-        ax.plot(self.x[prop_idx], self.y_upper[prop_idx], 'o',
-            markersize=10, markerfacecolor='none',
-            markeredgecolor='red', markeredgewidth=2,
-            label='BLI Propulsor')
 
-        # Add BLI effect zone highlighting
-        ax.axvspan(self.propulsor_position - self.suction_width,
-                self.propulsor_position + self.recovery_width,
-                color='orange', alpha=0.15,
-                label='BLI Influence Zone')
+        # Add vertical dashed line showing propulsor diameter
+        ax.plot(
+            [self.propulsor_position, self.propulsor_position],
+            [-disk_radius, disk_radius],  # Vertical span based on disk radius
+            color='black',
+            linestyle='--',
+            linewidth=1.5,
+            label='Propulsor Diameter'
+        )
 
         # Twin axis for absolute values
         ax2 = ax.twinx()
@@ -787,8 +790,7 @@ class Flow_around_fuselage:
         canvas.draw()
         NavigationToolbar2Tk(canvas, canvas_frame).pack(side=tk.TOP, fill=tk.X)
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-            
-
+ 
     def boundary_layer_velocity_profile(self, x_pos, y):
         """
         Compute velocity at (x, y) considering boundary layer effects.
