@@ -824,43 +824,56 @@ class Flow_around_fuselage:
         else:  # Turbulent
             return U_e * (y_wall/delta_99)**(1/7)
     
-
     def get_local_velocity_at_propulsor(self):
-        """Compute mass-averaged velocity over actuator disk area considering BL thickness."""
+        """Compute mass-averaged velocity over actuator disk area using Kaiser's method."""
         # Get propulsor parameters
         idx = np.argmin(np.abs(self.x - self.propulsor_position))
-        R_prop = self.y_upper[idx]  # Fuselage radius
+        R_prop = self.y_upper[idx]  # Fuselage radius at propulsor
         R_disk = self.disk_radius   # Propulsor outer radius
-        delta_99 = self.delta_99[idx]  # Boundary layer thickness
-        
-        # Effective integration limits
-        R_eff = min(R_prop + delta_99, R_disk)
+        delta_99 = self.delta_99[idx]
         x_disk = self.propulsor_position
 
-        # Case 1: Entire disk within boundary layer (δ99 > R_disk - R_prop)
+        # Stability parameters
+        epsilon = 1e-10
+        delta_99_min = 1e-6  # Minimum boundary layer thickness
+
+        # Define velocity profile (Kaiser Eq. 10)
+        def boundary_layer_velocity(x, r):
+            Re_theta = self.rho * self.net_velocity_calculation(x) * self.theta[idx] / (self.mu + epsilon)
+            
+            # Handle division-by-zero for shape factor (H)
+            theta_clamped = self.theta[idx] + epsilon
+            H = self.delta_star[idx] / theta_clamped  # Shape factor
+            
+            # Turbulent flow (Kaiser's 1/7th power law with shape factor adjustment)
+            if Re_theta > 2000:
+                return self.free_stream_velocity * (1 - (r - R_prop) / delta_99)**(1/7) * (1 - 0.2 * (H - 1.3))
+            # Laminar flow (quadratic profile with clamped delta_99)
+            else:
+                delta_99_clamped = max(delta_99, delta_99_min)
+                term = (r - R_prop) / delta_99_clamped
+                return self.free_stream_velocity * (2 * term - term**2)
+
+        # Case handling (unchanged)
         if (R_prop + delta_99) >= R_disk:
             r = np.linspace(R_prop, R_disk, 100)
-            velocities = [self.boundary_layer_velocity_profile(x_disk, y) for y in r]
-        
-        # Case 2: Disk extends beyond boundary layer
+            velocities = [boundary_layer_velocity(x_disk, y) for y in r]
         else:
-            # Boundary layer region
             r_bl = np.linspace(R_prop, R_prop + delta_99, 50)
-            v_bl = [self.boundary_layer_velocity_profile(x_disk, y) for y in r_bl]
-            
-            # Freestream region
-            r_fs = np.linspace(R_prop + delta_99 + 1e-6, R_disk, 50)  # Avoid overlap
+            v_bl = [boundary_layer_velocity(x_disk, y) for y in r_bl]
+            r_fs = np.linspace(R_prop + delta_99 + 1e-6, R_disk, 50)
             v_fs = [self.free_stream_velocity] * len(r_fs)
-            
             r = np.concatenate([r_bl, r_fs])
             velocities = np.concatenate([v_bl, v_fs])
 
-        # Mass-averaged velocity calculation
+        # Mass-averaged velocity (Kaiser Eq. 11)
         numerator = np.trapz([u * r_i for u, r_i in zip(velocities, r)], r)
         denominator = 0.5 * (R_disk**2 - R_prop**2)
-        
-        return (2 * numerator) / denominator if denominator != 0 else 0.0
+        return (2 * numerator) / (denominator + epsilon)
     
+
+
+
     def compute_skin_friction(self, i):
         Re_x = self.Re_x[i]
         if Re_x < 5e5:  # Laminar (from https://fluidmech.onlineflowcalculator.com/White/Chapter7)
