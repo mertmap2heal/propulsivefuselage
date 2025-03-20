@@ -222,8 +222,8 @@ class EngineMassEstimation:
  
 class Flow_around_fuselage:
     def __init__(self, v_freestream, Mach, rho, mu, delta_p, A_inlet, p,
-                propulsor_position=33.0, eta_disk=0.65, 
-                eta_motor=0.80, eta_prop=0.70, nacelle_length=4.5):
+                propulsor_position=33.0, eta_disk=0.90, 
+                eta_motor=0.85, eta_prop=0.85, nacelle_length=4.5):
 
         
         self.A_inlet = A_inlet
@@ -248,8 +248,8 @@ class Flow_around_fuselage:
         self.PSC = 0.0
         
         # BLI Control Parameters
-        self.suction_strength = 0.4       
-        self.suction_width = 3 * self.disk_radius    # Upstream influence
+        self.suction_strength = 0.6       
+        self.suction_width = 4 * self.disk_radius    # Upstream influence
         self.recovery_width = 6 * self.disk_radius   # Downstream influence
         self.delta_99_max = 0.12 * self.fuselage_length  # Max allowed BL thickness
         self.disk_active = False #  Recheck the logic !!!!
@@ -993,33 +993,39 @@ class Flow_around_fuselage:
     
     def compute_drag_reduction(self):
         """Drag reduction with realistic nacelle/intake losses"""
-        # Boundary layer drag difference
-        D_prime_noBLI = self.rho * self.free_stream_velocity**2 * self.results_without_propulsor["theta"]
-        D_prime_BLI = self.rho * self.free_stream_velocity**2 * self.results_with_propulsor["theta"]
+        # 1. Compute local edge velocities for both cases
+        U_e_noBLI = np.array([self.net_velocity_calculation(x) for x in self.results_without_propulsor["x"]])
+        U_e_BLI = np.array([self.net_velocity_calculation(x) for x in self.results_with_propulsor["x"]])
+
+        # 2. Boundary layer drag difference (CORRECTED)
+        D_prime_noBLI = self.rho * (U_e_noBLI**2) * self.results_without_propulsor["theta"]
+        D_prime_BLI = self.rho * (U_e_BLI**2) * self.results_with_propulsor["theta"]
+        
         D_noBLI = np.trapz(D_prime_noBLI * 2 * np.pi * self.R, self.x)
         D_BLI = np.trapz(D_prime_BLI * 2 * np.pi * self.R, self.x)
 
-        # Engine installation drag (use LOCAL velocity)
+        # 3. Engine installation drag
         v_local = self.get_local_velocity_at_propulsor()
         q_inlet = 0.5 * self.rho * v_local**2
-
-        # Intake drag with efficiency  
-        η_inlet = 0.95  # Assume highly optimized intake
-        intake_drag = q_inlet * (self.nacelle.A_inlet - self.effective_A_disk) * (1 - η_inlet)
-
-        # Nacelle drag (lower coefficients for streamlined design)
-        inlet_radius = math.sqrt(self.nacelle.A_inlet / math.pi)
-        wetted_area = 2 * np.pi * inlet_radius * self.nacelle_length
-        Re_nacelle = self.rho * v_local * self.nacelle_length / self.mu
-        C_f = 0.074 / Re_nacelle**(1/5) if Re_nacelle > 5e5 else 1.328 / np.sqrt(Re_nacelle)
-        C_d_form = 0.10  # Reduced from 0.08 (streamlined nacelle)
         
+        # Intake drag 
+        
+        η_inlet = 0.97  # More realistic for BLI
+        A_capture = min(self.nacelle.A_inlet, self.effective_A_disk/η_inlet)
+        intake_drag = q_inlet * (A_capture - self.effective_A_disk)
+
+        # Nacelle drag (updated coefficients)
+        C_d_form = 0.03  # Reduced for streamlined BLI nacelle
         form_drag = 0.5 * self.rho * v_local**2 * self.nacelle.A_inlet * C_d_form
+        
+        # Skin friction (more accurate Re scaling)
+        Re_nacelle = self.rho * v_local * self.nacelle_length / self.mu
+        C_f = 0.455 / (np.log(Re_nacelle)**2.58) if Re_nacelle > 1e6 else 1.328/np.sqrt(Re_nacelle)
+        wetted_area = 2.2 * np.pi * math.sqrt(self.nacelle.A_inlet/np.pi) * self.nacelle_length  # +10% safety factor
         skin_friction = 0.5 * self.rho * v_local**2 * wetted_area * C_f
-        nacelle_drag = form_drag + skin_friction
 
-        return (D_noBLI - D_BLI) - (intake_drag + nacelle_drag)
-
+        return (D_noBLI - D_BLI) - (intake_drag + form_drag + skin_friction)
+    
     def compute_PSC(self):
         # Get required parameters
         Vinf = self.free_stream_velocity
@@ -1035,27 +1041,13 @@ class Flow_around_fuselage:
             self.rho * Vinf**2 * self.results_with_propulsor["theta"] * 2 * np.pi * self.R,  
             self.x
         )
-
-        # 2. Calculate propulsion power requirements
-        T_net = self.compute_net_thrust()
-        
-        # Conventional propulsion power (non-BLI reference)
-        T_conv = D_NoBLI  # Thrust needed to overcome drag without BLI
-        P_conv = (T_conv * Vinf) / (0.8)  # Assuming separate η
-        
-        # BLI propulsion power
-        P_BLI_prop = (T_net * V_local) / self.eta_total
-        
-        # 3. Total power calculations
-        P_NonBLI = D_NoBLI * Vinf + P_conv 
-        P_BLI = D_BLI * Vinf + P_BLI_prop
-        
+     
         # 4. Final PSC
-        return (P_NonBLI - P_BLI) / P_NonBLI
+        return (D_NoBLI-D_BLI) / D_NoBLI
 
 
 class ActuatorDiskModel:
-    def __init__(self, rho, A_effective, v_inlet, v_disk, eta_disk=0.80, eta_motor=0.80, eta_prop=0.80):
+    def __init__(self, rho, A_effective, v_inlet, v_disk, eta_disk=0.85, eta_motor=0.85, eta_prop=0.85):
         
         self.rho = rho  # Air Density (kg/m^3)
         self.A_effective  = A_effective  # Disk Area (m^2)
