@@ -13,21 +13,6 @@ from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 import matplotlib.colors as mcolors  
 
 
-import tkinter as tk
-from tkinter import ttk
-import numpy as np
-import matplotlib.pyplot as plt
-import math
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
-from scipy.integrate import solve_ivp
-import mplcursors
-from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
-import matplotlib.colors as mcolors
-
-
 #---------------------------------------# 
 # Section 1 - Flight Conditions #
 #---------------------------------------# 
@@ -456,11 +441,9 @@ class Flow_around_fuselage:
         # 6.22 Initialize derivative array
         dr2_dx = np.zeros_like(self.x)  # d(r²)/dx array initialization
 
-        # 6.23 Apply Prandtl-Glauert compressibility correction
-        # Theory: Account for compressibility effects at Mach ≥ 0.3 using PG transformation
-        # Ref: https://en.wikipedia.org/wiki/Prandtl%E2%80%93Glauert_transformation
-        beta = np.sqrt(1 - self.Mach**2) if self.Mach >= 0.3 else 1.0
-
+        # 6.23 Apply Prandtl-Glauert compressibility correction - It s not used anymore 
+ 
+        
         # 6.24 Calculate source distribution along fuselage
         for i, xi in enumerate(self.x):
             if xi <= self.nose_length:
@@ -468,14 +451,14 @@ class Flow_around_fuselage:
                 # Theory: Parabolic nose shape derivative from Kaiser's method
                 # Ref: QUASI ANALYTICAL AERODYNAMIC METHODS FOR PROPULSIVE FUSELAGE CONCEPTS
                 term = (xi - self.nose_length)/self.nose_length
-                dr2_dx[i] = 2 * (self.fuselage_radius * beta)**2 * (1 - term**2) * (-2 * term/self.nose_length)
+                dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term/self.nose_length)
                 
             elif xi >= self.fuselage_length - self.tail_length:
                 # 6.25 Tail section source strength
                 # Theory: Parabolic tail shape derivative with PG correction
                 x_tail = xi - (self.fuselage_length - self.tail_length)
                 term = x_tail/self.tail_length
-                dr2_dx[i] = 2 * (self.fuselage_radius * beta)**2 * (1 - term**2) * (-2 * term/self.tail_length)
+                dr2_dx[i] = 2 * (self.fuselage_radius)**2 * (1 - term**2) * (-2 * term/self.tail_length)
                 
             else:
                 # 6.26 Cylindrical section handling
@@ -483,7 +466,7 @@ class Flow_around_fuselage:
                 dr2_dx[i] = 0.0
 
         # 6.27 Return scaled source strength
-        # Theory: Q(x) = V_∞ * π * d(r²)/dx (Kaiser Eq. 5)
+        # Theory: Q(x) = V_∞ * π * d(r²)/dx 
         # Ref: https://www.bauhaus-luftfahrt.net/fileadmin/.../Propulsive_Fuselage_Concepts_X.pdf
         return self.free_stream_velocity * np.pi * dr2_dx
     
@@ -495,6 +478,7 @@ class Flow_around_fuselage:
 
         # 6.29 Create figure and axis setup
         # Theory: Dual-axis plot for geometry + source strength visualization
+        plt.rcParams.update({'font.size': 12})  # Base font size for all elements
         fig, ax1 = plt.subplots(figsize=(12, 4))
         
         # 6.30 Plot fuselage geometry
@@ -507,10 +491,10 @@ class Flow_around_fuselage:
         ax1.set_aspect(0.5)  # Maintain proportional scaling
         y_max = max(self.y_upper) * 1.1  # 10% margin above fuselage
         ax1.set_ylim(-y_max, y_max)
-        ax1.set_xlabel('Axial Position [m]')
-        ax1.set_ylabel('Vertical Position [m]')
+        ax1.set_xlabel('Axial Position [m]', fontsize=14)
+        ax1.set_ylabel('Vertical Position [m]', fontsize=14)
         ax1.grid(True)
-        ax1.set_title('Source Strength Distribution')
+        ax1.set_title('Source Strength Distribution', fontsize=16, pad=20)
 
         # 6.32 Create source strength axis
         ax2 = ax1.twinx()
@@ -519,13 +503,14 @@ class Flow_around_fuselage:
         # 6.33 Configure source strength axis
         q_max = max(abs(self.source_strength)) * 1.1  # Symmetric limits
         ax2.set_ylim(-q_max, q_max)
-        ax2.set_ylabel('Source Strength Q(x) [m²/s]')
+        ax2.set_ylabel('Source Strength Q(x) [m²/s]', fontsize=14)
         
         # 6.34 Create unified legend
         lines = [line_upper, line_source]
         labels = [l.get_label() for l in lines]
         ax1.legend(lines, labels, loc='upper center', 
-                 bbox_to_anchor=(0.5, -0.15), ncol=2)
+                 bbox_to_anchor=(0.5, -0.15), ncol=2,
+                 fontsize=16, framealpha=0.95)
 
         # 6.35 Add interactive hover tool
         def on_hover(sel):
@@ -537,6 +522,8 @@ class Flow_around_fuselage:
                 f"Q(x): {self.source_strength[idx]:.2f} m²/s\n"
                 f"Radius: {self.y_upper[idx]:.2f}m"
             )
+            sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9)
+            sel.annotation.set_fontsize(16)
         
         cursor = mplcursors.cursor(line_source, hover=True)
         cursor.connect("add", on_hover)
