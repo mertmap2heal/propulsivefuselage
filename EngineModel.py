@@ -742,7 +742,7 @@ class Flow_around_fuselage:
         
         # 6.66 Compute velocity gradient
         # Theory: Central difference scheme (2nd order accurate)
-        # Ref: https://aerodynamics4students.com/.../2d-boundary-layer-modelling.php
+        # Ref: https://aerodynamics4students.com/subsonic-aerofoil-and-wing-theory/2d-boundary-layer-modelling.php
         dU_e_dx = np.gradient(U_e, self.x)  # ∂U_e/∂x [1/s]
         
         # 6.67 Apply Euler equation for pressure gradient
@@ -783,25 +783,7 @@ class Flow_around_fuselage:
         ax2.fill_between(self.x, self.y_upper, self.y_lower, color='lightgray', alpha=0.5)
 
         # 6.74 Add wing profile (NACA 0012)
-        def generate_naca0012():
-            """Generate NACA 0012 airfoil coordinates"""
-            x = np.linspace(0, 1, 100)
-            t = 0.2  # 12% thickness
-            yt = 5*t * (0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1015*x**4)
-            return x, yt
-        
-        # 6.75 Position wing at 35% fuselage length
-        x_wing = self.x[int(len(self.x)*0.35)]
-        chord_length = 8.0  # 8m chord
-        x_airfoil, yt = generate_naca0012()
-        x_scaled = x_wing + x_airfoil * chord_length
-        y_upper_wing = yt * chord_length
-        y_lower_wing = -yt * chord_length
-
-        # 6.76 Plot wing geometry
-        line_wing_upper, = ax2.plot(x_scaled, y_upper_wing, 'g', linewidth=2, label='Wing Profile')
-        line_wing_lower, = ax2.plot(x_scaled, y_lower_wing, 'g', linewidth=2)
-        ax2.fill_between(x_scaled, y_upper_wing, y_lower_wing, color='black', alpha=0.3)
+ 
 
         # 6.77 Configure geometry axis
         ax2.set_aspect(0.5)  # Maintain fuselage proportions
@@ -810,7 +792,7 @@ class Flow_around_fuselage:
         ax2.set_ylabel('Vertical Position [m]')
 
         # 6.78 Create unified legend
-        lines = [line_incomp, line_comp, line_upper, line_wing_upper]
+        lines = [line_incomp, line_comp, line_upper]
         labels = [l.get_label() for l in lines]
         ax1.legend(lines, labels, loc='upper center', 
                 bbox_to_anchor=(0.5, -0.15), ncol=4)
@@ -830,10 +812,6 @@ class Flow_around_fuselage:
                 elif artist == line_upper:
                     text = (f"x: {x_val:.2f}m\n"
                             f"Fuselage Y: {self.y_upper[idx]:.2f}m")
-                elif artist == line_wing_upper:
-                    wing_idx = np.argmin(np.abs(x_scaled - x_val))
-                    text = (f"Wing Position: {x_val:.2f}m\n"
-                            f"Thickness: {y_upper_wing[wing_idx]:.2f}m")
                 else:
                     text = f"x: {x_val:.2f}m"
                 
@@ -841,7 +819,7 @@ class Flow_around_fuselage:
             except Exception as e:
                 sel.annotation.set_text("Data not available")
 
-        cursor = mplcursors.cursor([line_incomp, line_comp, line_upper, line_wing_upper], hover=True)
+        cursor = mplcursors.cursor([line_incomp, line_comp, line_upper], hover=True)
         cursor.connect("add", on_hover)
 
         # 6.80 Finalize layout
@@ -877,9 +855,9 @@ class Flow_around_fuselage:
 
         # 6.85 Set initial BL parameters based on flow regime
         if Re_x_initial < 5e5:  # Laminar flow (Blasius solution)
-            # Theory: θ = 0.664√(νx/U_∞) (White, Viscous Fluid Flow)
+            # Theory: θ = 0.664√(νx/U_∞) (An Introduction to the Mechanics of Incompressible Fluids, Eq. 7.58 and 7.65)
             theta_initial = 0.664 * np.sqrt(nu * x_initial / self.free_stream_velocity)
-            delta_99_initial = 5.0 * x_initial / np.sqrt(Re_x_initial)
+            delta_99_initial = 5.0 * np.sqrt(nu * x_initial / self.free_stream_velocity)
         else:  # Turbulent flow (1/7th power law)
             # Theory: θ ≈ 0.016x/Re_x^{1/7} (Schlichting Boundary Layer Theory)
             theta_initial = 0.016 * x_initial / (Re_x_initial ** (1/7))
