@@ -887,67 +887,35 @@ class Flow_around_fuselage:
         self.tau_wall = self._compute_wall_shear_stress()  # Wall shear stress
 
     def _boundary_layer_ode_system(self, x, y, dp_dx):
-        """
-        Defines ODE system for boundary layer development with BLI effects
-        Theory: Momentum and displacement thickness equations from:
-                - White's Viscous Fluid Flow (base equations)
-                - Kaiser's BLI modifications (suction terms)
-        """
-        # 6.90 Unpack current BL parameters
-        theta, delta_99 = y  # Momentum thickness [m], 99% thickness [m]
-        eps = 1e-10  # Numerical safety factor
-        R_min = 0.5  # Minimum fuselage radius [m]
-
-        # 6.91 Get local flow parameters
+        theta, delta_99 = y
+        eps = 1e-10
+        
+        # Get local parameters
         idx = np.clip(np.searchsorted(self.x, x), 0, len(self.x)-1)
-        U_e = self.net_velocity_calculation(x)  # Edge velocity [m/s]
-        R = np.maximum(self.R[idx], R_min)  # Clamped fuselage radius [m]
-        dR_dx = self.dR_dx[idx]  # Radius gradient [m/m]
+        U_e = self.net_velocity_calculation(x)
+        Re_x = self.rho * U_e * x / (self.mu + eps)
+        laminar = Re_x < 5e5
 
-        # 6.92 Calculate velocity gradient
-        # Theory: Finite difference approximation of dU_e/dx
-        if idx == 0:  # Forward difference at start
-            dU_e_dx = (self.net_velocity_calculation(self.x[1]) - U_e)/(self.x[1] - self.x[0])
-        elif idx == len(self.x)-1:  # Backward difference at end
-            dU_e_dx = (U_e - self.net_velocity_calculation(self.x[-2]))/(self.x[-1] - self.x[-2])
-        else:  # Central difference elsewhere
-            dU_e_dx = (self.net_velocity_calculation(self.x[idx+1]) - 
-                     self.net_velocity_calculation(self.x[idx-1]))/(self.x[idx+1] - self.x[idx-1])
+        # Empirical relationships ONLY
+        if laminar:
+            # Blasius solution derivatives
+            dtheta_dx = 0.664 * np.sqrt(self.mu/(self.rho * U_e * x)) * (0.5/x)
+            ddelta99_dx = 5.0 * dtheta_dx
+        else:
+            # 1/7-power-law derivatives
+            dtheta_dx = 0.016 * (1 - 1/7) * x**(-1/7) * (self.rho * U_e/self.mu)**(-1/7)
+            ddelta99_dx = 0.16 * (1 - 1/7) * x**(-1/7) * (self.rho * U_e/self.mu)**(-1/7)
 
-        # 6.93 Calculate flow regime parameters
-        Re_x = self.rho * U_e * x / (self.mu + eps)  # Local Reynolds number
-        Cf = self.compute_skin_friction(idx)  # Skin friction coefficient
-        H = 2.59 if Re_x < 5e5 else 1.29  # Shape factor (laminar/turbulent)
-
-        # 6.94 Momentum thickness equation
-        # Theory: dθ/dx = (Cf/2) + (θ/ρU_e²)[(H+2)dp/dx - ρU_e(dU_e/dx)θ] + (θ/R)dR/dx
-        momentum_term = (theta/(self.rho*(U_e**2 + eps)))*((H + 2)*dp_dx[idx] - self.rho*U_e*dU_e_dx*theta)
-        geometry_term = (theta/R) * dR_dx
-        dtheta_dx_base = (Cf/2) + momentum_term + geometry_term
-
-        # 6.95 99% thickness equation
-        # Theory: Different formulation for laminar vs turbulent flow
-        if Re_x < 5e5:  # Laminar (δ99 = 5θ)
-            ddelta99_dx_base = 5.0*dtheta_dx_base - (delta_99/R)*dR_dx
-        else:  # Turbulent (δ99/θ = constant ratio)
-            ddelta99_dx_base = (delta_99/theta)*dtheta_dx_base - (delta_99/R)*dR_dx
-
-        # 6.96 Apply BLI suction effects
+        # Apply suction effects (preserved as requested)
         if self.disk_active:
             suction_start = self.propulsor_position - self.suction_width
             if suction_start <= x <= self.propulsor_position:
-                # Theory: Linear suction strength ramp (Kaiser et al.)
                 suction_factor = self.suction_strength * (x - suction_start)/self.suction_width
-                dtheta_dx = dtheta_dx_base - suction_factor * (theta/self.suction_width)
-                ddelta99_dx = ddelta99_dx_base - suction_factor * (delta_99/self.suction_width)
-            else:
-                dtheta_dx = dtheta_dx_base
-                ddelta99_dx = ddelta99_dx_base
-        else:
-            dtheta_dx = dtheta_dx_base
-            ddelta99_dx = ddelta99_dx_base
+                dtheta_dx -= suction_factor * (theta/self.suction_width)
+                ddelta99_dx -= suction_factor * (delta_99/self.suction_width)
 
         return [dtheta_dx, ddelta99_dx]
+    
     def plot_boundary_layer_thickness(self, canvas_frame):
         """
         Visualize boundary layer development comparison with/without BLI
@@ -982,7 +950,7 @@ class Flow_around_fuselage:
         theta = np.arctan(dy_dx)  # Surface angle [rad]
         
         # 6.103 Calculate exaggerated BL thickness for visualization
-        exaggeration_factor = 80  # Amplification factor for visible BL
+        exaggeration_factor = 1  # Amplification factor for visible BL
         delta_normal_with = (self.results_with_propulsor["delta_99"] 
                             * np.cos(theta) * exaggeration_factor)
         delta_normal_without = (self.results_without_propulsor["delta_99"]
