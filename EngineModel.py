@@ -896,7 +896,6 @@ class Flow_around_fuselage:
         Re_x = self.rho * U_e * x / (self.mu + eps)
         laminar = Re_x < 5e5
 
-        # Empirical relationships ONLY
         if laminar:
             # Blasius solution derivatives
             dtheta_dx = 0.664 * np.sqrt(self.mu/(self.rho * U_e * x)) * (0.5/x)
@@ -906,7 +905,6 @@ class Flow_around_fuselage:
             dtheta_dx = 0.016 * (1 - 1/7) * x**(-1/7) * (self.rho * U_e/self.mu)**(-1/7)
             ddelta99_dx = 0.16 * (1 - 1/7) * x**(-1/7) * (self.rho * U_e/self.mu)**(-1/7)
 
-        # Apply suction effects (preserved as requested)
         if self.disk_active:
             suction_start = self.propulsor_position - self.suction_width
             if suction_start <= x <= self.propulsor_position:
@@ -1041,7 +1039,7 @@ class Flow_around_fuselage:
             f"PSC: {self.PSC:.1%}"
         )
         ax.text(
-            0.02, 0.95, metrics_text, 
+            0.02, 0.90, metrics_text, 
             transform=ax.transAxes,
             fontsize=12, 
             bbox=dict(facecolor='wheat', alpha=0.5)
