@@ -1,0 +1,22 @@
+// Drag Decomposition
+digraph {
+	T [label="Total drag" color=darkblue fontcolor=white shape=box style=filled]
+	Z [label="Zero-lift drag" color=darkblue fontcolor=white shape=box style=filled]
+	L [label="lift-dependent
+drag" color=goldenrod fontcolor=black shape=box style=filled]
+	S [label="Skin friction drag" color=darkblue fontcolor=white shape=box style=filled]
+	P [label="Pressure drag" color=darkblue fontcolor=white shape=box style=filled]
+	I [label="Interference drag" color=darkblue fontcolor=white shape=box style=filled]
+	Fz [label="Form drag" color=darkblue fontcolor=white shape=box style=filled]
+	I_L [label="Induced drag" color=goldenrod fontcolor=black shape=box style=filled]
+	F_L [label="lift-dependent
+Form drag" color=goldenrod fontcolor=black shape=box style=filled]
+	T -> Z
+	T -> L
+	Z -> S
+	Z -> P
+	P -> I
+	P -> Fz
+	L -> I_L
+	L -> F_L
+}

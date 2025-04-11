@@ -313,7 +313,10 @@ class Flow_around_fuselage:
         # 6.5 Suction parameters initialization
         # Theory: Base suction strength proportional to capture area
         self.suction_strength = 0.06 * A_inlet  # Initial suction parameter [m²/s]
-        
+ 
+
+
+
         # 6.6 Mass flow ratio calculation
         # Theory: Engine mass flow vs boundary layer mass flow ratio
         mdot_engine = rho * v_freestream * A_inlet  # Engine mass flow [kg/s]
@@ -327,6 +330,9 @@ class Flow_around_fuselage:
         # Theory: Empirical scaling for suction/recovery zone widths
         self.suction_width = 3.0 * disk_diameter  # Upstream influence region [m]
         self.recovery_width = 0.00001 * disk_diameter  # Downstream recovery zone [m]
+
+ 
+
 
         # 6.8 Initialize remaining parameters
         self.nacelle_length = nacelle_length  # Nacelle length [m]
@@ -991,19 +997,19 @@ class Flow_around_fuselage:
 
         # 6.108 Mark propulsor position
         ax2.axvline(
-            x=self.propulsor_position, 
-            color='black', 
-            linestyle='--', 
-            linewidth=1.5, 
-            label='Propulsor Position'
-        )
+             x=self.propulsor_position, 
+             color='black', 
+             linestyle='--', 
+             linewidth=1.5, 
+             label='Propulsor Position'
+         )
 
         # 6.109 Configure axis labels and grid
         ax2.set_ylim(ax.get_ylim())  # Align y-limits for visual coherence
         ax2.set_ylabel('Absolute Boundary Layer Thickness [m]', color='k')
         ax.set_xlabel('Axial Position [m]')
         ax.set_ylabel('Vertical Position [m]')
-        ax.set_title('Boundary Layer Development Comparison')
+        ax.set_title('Boundary Layer Development')
         ax.grid(True)
 
         # 6.110 Create unified legend
@@ -1025,8 +1031,8 @@ class Flow_around_fuselage:
             idx_with = np.argmin(np.abs(self.results_with_propulsor["x"] - x_val))
             sel.annotation.set_text(
                 f"x: {x_val:.2f}m\n"
-                f"Without: {self.results_without_propulsor['delta_99'][idx_without]:.3f}m\n"
-                f"With: {self.results_with_propulsor['delta_99'][idx_with]:.3f}m"
+                f"BL Thickness: {self.results_without_propulsor['delta_99'][idx_without]:.3f}m\n"
+                #f"With: {self.results_with_propulsor['delta_99'][idx_with]:.3f}m"
             )
 
         cursor = mplcursors.cursor([line_without, line_with], hover=True)
@@ -1035,7 +1041,7 @@ class Flow_around_fuselage:
         # 6.112 Display performance metrics
         metrics_text = (
             f"Net Thrust: {self.T_net:.2f} N\n"
-            f"Drag Reduction: {self.D_red:.2f} N\n"
+           f"Drag Reduction: {self.D_red:.2f} N\n"
             f"PSC: {self.PSC:.1%}"
         )
         ax.text(
@@ -1054,43 +1060,7 @@ class Flow_around_fuselage:
         NavigationToolbar2Tk(canvas, canvas_frame).pack(side=tk.TOP, fill=tk.X)
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    def boundary_layer_velocity_profile(self, x_pos, y):
-        """
-        Compute velocity at (x, y) considering boundary layer effects
-        Theory: Uses empirical velocity profiles (laminar/turbulent) with
-                physical safeguards for numerical stability
-        Ref: White, F.M., Viscous Fluid Flow, McGraw-Hill, 2006
-        """
-        # 6.115 Get boundary layer edge velocity
-        # Theory: Potential flow solution at surface
-        U_e = self.net_velocity_calculation(x_pos)  # Edge velocity [m/s]
-        
-        # 6.116 Retrieve BL parameters at position
-        idx = np.argmin(np.abs(self.x - x_pos))  # Nearest grid index
-        delta_99 = max(self.delta_99[idx], 1e-6)  # Clamped 99% thickness [m]
-        R_fuselage = self.R[idx]  # Local fuselage radius [m]
 
-        # 6.117 Calculate wall-normal distance
-        # Safeguards: Clamp y between fuselage surface and BL edge
-        y_wall = y - R_fuselage  # Distance from surface [m]
-        y_wall = np.clip(y_wall, 0.0, delta_99)  # Prevent negative/overshoot values
-
-        # 6.118 Handle invalid flow regions
-        if delta_99 < 1e-6 or y_wall < 0:
-            return 0.0  # No flow inside structure or invalid BL
-
-        # 6.119 Determine flow regime
-        Re_local = self.Re_x[idx]  # Local Reynolds number
-
-        # 6.120 Laminar velocity profile (Blasius solution)
-        if Re_local < 5e5:
-            # Theory: Parabolic profile u/U_e = 2(y/δ) - (y/δ)^2
-            return U_e * (2*(y_wall/delta_99) - (y_wall/delta_99)**2)
-        
-        # 6.121 Turbulent velocity profile (1/7th power law)
-        else:
-            # Theory: Empirical power law u/U_e = (y/δ)^{1/7}
-            return U_e * (y_wall/delta_99)**(1/7)
         
     def get_local_velocity_at_propulsor(self):
         """
