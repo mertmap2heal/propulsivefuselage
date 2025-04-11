@@ -315,16 +315,8 @@ class Flow_around_fuselage:
         self.suction_strength = 0.06 * A_inlet  # Initial suction parameter [m²/s]
  
 
-
-
         # 6.6 Mass flow ratio calculation
-        # Theory: Engine mass flow vs boundary layer mass flow ratio
-        mdot_engine = rho * v_freestream * A_inlet  # Engine mass flow [kg/s]
-        avg_bl_velocity = 0.7 * v_freestream  # Average BL velocity [m/s]
-        bl_area = self.delta_99_max * self.fuselage_radius  # BL cross-section [m²]
-        mdot_bl = rho * avg_bl_velocity * bl_area  # BL mass flow [kg/s]
-        flow_ratio = mdot_engine / (mdot_bl + 1e-6)  # Avoid division by zero
-        self.suction_strength *= np.clip(flow_ratio, 0.5, 2.0)  # Scale suction strength
+      
 
         # 6.7 Define influence regions
         # Theory: Empirical scaling for suction/recovery zone widths
@@ -1031,25 +1023,25 @@ class Flow_around_fuselage:
             idx_with = np.argmin(np.abs(self.results_with_propulsor["x"] - x_val))
             sel.annotation.set_text(
                 f"x: {x_val:.2f}m\n"
-                f"BL Thickness: {self.results_without_propulsor['delta_99'][idx_without]:.3f}m\n"
-                #f"With: {self.results_with_propulsor['delta_99'][idx_with]:.3f}m"
+                f"BL Thickness without BLI: {self.results_without_propulsor['delta_99'][idx_without]:.3f}m\n"
+                f"BL Thickness with BLI: {self.results_with_propulsor['delta_99'][idx_with]:.3f}m"
             )
 
         cursor = mplcursors.cursor([line_without, line_with], hover=True)
         cursor.connect("add", on_hover)
 
         # 6.112 Display performance metrics
-        metrics_text = (
-            f"Net Thrust: {self.T_net:.2f} N\n"
-           f"Drag Reduction: {self.D_red:.2f} N\n"
-            f"PSC: {self.PSC:.1%}"
-        )
-        ax.text(
-            0.02, 0.90, metrics_text, 
-            transform=ax.transAxes,
-            fontsize=12, 
-            bbox=dict(facecolor='wheat', alpha=0.5)
-        )
+        #metrics_text = (
+        #    f"Net Thrust: {self.T_net:.2f} N\n"
+        #    f"Drag Reduction: {self.D_red:.2f} N\n"
+        #    f"PSC: {self.PSC:.1%}"
+        #)
+        #ax.text(
+        #    0.02, 0.90, metrics_text, 
+        #    transform=ax.transAxes,
+        #    fontsize=12, 
+        #    bbox=dict(facecolor='wheat', alpha=0.5)
+        #)
 
         # 6.113 Finalize layout
         fig.tight_layout()
@@ -1094,7 +1086,7 @@ class Flow_around_fuselage:
                 # Theory: 1/7th power law with H correction (Kaiser Eq.10a)
                 return (self.free_stream_velocity 
                        * (1 - (r - R_fus)/delta_99)**(1/7) 
-                       * (1 - 0.2*(H - 1.3)))
+                        )
             else:  # Laminar flow
                 # Theory: Quadratic profile (Kaiser Eq.10b)
                 delta_99_clamped = max(delta_99, delta_99_min)
@@ -1313,11 +1305,17 @@ class Flow_around_fuselage:
 
         # 6.158 Calculate nacelle installation drag
         C_d_nacelle = 0.008  # Form drag coefficient for nacelle
+     
+        # Compute Reynolds number for nacelle
         Re = self.rho * self.free_stream_velocity * self.nacelle.nac_length / self.mu
-        
-        # 6.159 Turbulent skin friction coefficient (Prandtl-Schlichting)
-        C_f = 0.455 / (np.log(0.06*Re))**2  
-        
+
+        # Skin friction coefficient depending on flow regime
+        if Re < 5e5:
+            C_f = 1.328 / np.sqrt(Re + 1e-8)  # Blasius for laminar flow
+        else:
+            compressibility_correction = (1 + 0.144 * self.Mach**2) ** -0.65
+            C_f = (0.455 / (np.log10(Re)**2.58)) * compressibility_correction  # Schlichting
+
         # 6.160 Compute total nacelle drag components
         nacelle_drag = 0.5 * self.rho * self.free_stream_velocity**2 * (
             self.nacelle.A_inlet * C_d_nacelle +  # Form drag
