@@ -388,8 +388,8 @@ class Flow_around_fuselage:
 
         # 6.14 Validate propulsor installation
         idx = np.argmin(np.abs(self.x - propulsor_position))
-        R_prop = self.y_upper[idx]
-        self.effective_A_disk = np.pi * (self.disk_radius**2 - R_prop**2)
+        R_fus = self.y_upper[idx]
+        self.effective_A_disk = np.pi * (self.disk_radius**2 - R_fus**2)
         if self.effective_A_disk <= 0:
             raise ValueError("Disk radius must exceed fuselage radius at propulsor")
 
@@ -1060,8 +1060,7 @@ class Flow_around_fuselage:
         NavigationToolbar2Tk(canvas, canvas_frame).pack(side=tk.TOP, fill=tk.X)
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-
-        
+  
     def get_local_velocity_at_propulsor(self):
         """
         Compute mass-averaged velocity over actuator disk using Kaiser's method
@@ -1072,7 +1071,7 @@ class Flow_around_fuselage:
         """
         # 6.122 Get propulsor installation parameters
         idx = np.argmin(np.abs(self.x - self.propulsor_position))
-        R_prop = self.y_upper[idx]  # Fuselage radius at propulsor [m]
+        R_fus = self.y_upper[idx]  # Fuselage radius at propulsor [m]
         R_disk = self.disk_radius   # Propulsor outer radius [m]
         delta_99 = self.delta_99[idx]  # BL thickness [m]
         x_disk = self.propulsor_position  # Axial position [m]
@@ -1094,31 +1093,31 @@ class Flow_around_fuselage:
             if Re_theta > 2000:  # Turbulent flow
                 # Theory: 1/7th power law with H correction (Kaiser Eq.10a)
                 return (self.free_stream_velocity 
-                       * (1 - (r - R_prop)/delta_99)**(1/7) 
+                       * (1 - (r - R_fus)/delta_99)**(1/7) 
                        * (1 - 0.2*(H - 1.3)))
             else:  # Laminar flow
                 # Theory: Quadratic profile (Kaiser Eq.10b)
                 delta_99_clamped = max(delta_99, delta_99_min)
-                term = (r - R_prop)/delta_99_clamped
+                term = (r - R_fus)/delta_99_clamped
                 return self.free_stream_velocity * (2*term - term**2)
 
         # 6.126 Sample velocity across disk radius
-        if (R_prop + delta_99) >= R_disk:  # Entire disk in BL
-            r = np.linspace(R_prop, R_disk, 100)  # Radial points [m]
+        if (R_fus + delta_99) >= R_disk:  # Entire disk in BL
+            r = np.linspace(R_fus, R_disk, 100)  # Radial points [m]
             velocities = [boundary_layer_velocity(x_disk, y) for y in r]
         else:  # Combined BL + freestream
             # 6.127 Split into BL and freestream regions
-            r_bl = np.linspace(R_prop, R_prop + delta_99, 50)
+            r_bl = np.linspace(R_fus, R_fus + delta_99, 50)
             v_bl = [boundary_layer_velocity(x_disk, y) for y in r_bl]
-            r_fs = np.linspace(R_prop + delta_99 + 1e-6, R_disk, 50)
+            r_fs = np.linspace(R_fus + delta_99 + 1e-6, R_disk, 50)
             v_fs = [self.free_stream_velocity] * len(r_fs)
             r = np.concatenate([r_bl, r_fs])
             velocities = np.concatenate([v_bl, v_fs])
 
         # 6.128 Compute mass-averaged velocity (Kaiser Eq.11)
-        # Theory: V_avg = (2∫u(r)·r dr) / (R_disk² - R_prop²)
+        # Theory: V_avg = (2∫u(r)·r dr) / (R_disk² - R_fus²)
         numerator = np.trapz([u*r_i for u, r_i in zip(velocities, r)], r)
-        denominator = 0.5 * (R_disk**2 - R_prop**2)
+        denominator = 0.5 * (R_disk**2 - R_fus**2)
         return (2 * numerator) / (denominator + epsilon)  # [m/s]
     
     def compute_skin_friction(self, i):
