@@ -315,6 +315,7 @@ class Flow_around_fuselage:
         A_disk = A_inlet * 0.9  # Effective disk area [m²]
         self.disk_radius = math.sqrt(A_disk / math.pi)  # Disk radius [m]
         disk_diameter = 2 * self.disk_radius  # Propulsor diameter [m]
+        self.inlet_radius = math.sqrt(A_inlet / math.pi)  # Inlet radius [m]
         
         # 6.5 Suction parameters initialization
         # Theory: Base suction strength proportional to capture area
@@ -1069,7 +1070,7 @@ class Flow_around_fuselage:
         # 6.122 Get propulsor installation parameters
         idx = np.argmin(np.abs(self.x - self.propulsor_position))
         R_fus = self.y_upper[idx]  # Fuselage radius at propulsor [m]
-        R_disk = self.disk_radius   # Propulsor outer radius [m]
+        R_inlet = self.inlet_radius   # Propulsor outer radius [m]
         delta_99 = self.delta_99[idx]  # BL thickness [m]
         x_disk = self.propulsor_position  # Axial position [m]
 
@@ -1099,22 +1100,22 @@ class Flow_around_fuselage:
                 return self.free_stream_velocity * (2*term - term**2)
 
         # 6.126 Sample velocity across disk radius
-        if (R_fus + delta_99) >= R_disk:  # Entire disk in BL
-            r = np.linspace(R_fus, R_disk, 100)  # Radial points [m]
+        if (R_fus + delta_99) >= R_inlet:  # Entire disk in BL
+            r = np.linspace(R_fus, R_inlet, 100)  # Radial points [m]
             velocities = [boundary_layer_velocity(x_disk, y) for y in r]
         else:  # Combined BL + freestream
             # 6.127 Split into BL and freestream regions
             r_bl = np.linspace(R_fus, R_fus + delta_99, 50)
             v_bl = [boundary_layer_velocity(x_disk, y) for y in r_bl]
-            r_fs = np.linspace(R_fus + delta_99 + 1e-6, R_disk, 50)
+            r_fs = np.linspace(R_fus + delta_99 + 1e-6, R_inlet, 50)
             v_fs = [self.free_stream_velocity] * len(r_fs)
             r = np.concatenate([r_bl, r_fs])
             velocities = np.concatenate([v_bl, v_fs])
 
         # 6.128 Compute mass-averaged velocity (Kaiser Eq.11)
-        # Theory: V_avg = (2∫u(r)·r dr) / (R_disk² - R_fus²)
+        # Theory: V_avg = (2∫u(r)·r dr) / (R_inlet² - R_fus²)
         numerator = np.trapz([u*r_i for u, r_i in zip(velocities, r)], r)
-        denominator = 0.5 * (R_disk**2 - R_fus**2)
+        denominator = 0.5 * (R_inlet**2 - R_fus**2)
         return (2 * numerator) / (denominator + epsilon)  # [m/s]
     
     def compute_skin_friction(self, i):
