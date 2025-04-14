@@ -1682,6 +1682,17 @@ class EngineVisualization:
 #---------------------------------------# 
 # Section 9 - GUI Application #
 #---------------------------------------# 
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import os
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+import mplcursors
+
+# NOTE: The following classes (FlightConditions, NacelleParameters, ActuatorDiskModel,
+# DragbyBLIEngine, EngineMassEstimation, EngineVisualization, Flow_around_fuselage)
+# should be defined elsewhere in your project.
+
 class BoundaryLayerIngestion:
     """
     Main GUI application for Boundary Layer Ingestion analysis
@@ -1710,9 +1721,9 @@ class BoundaryLayerIngestion:
     def _initialize_variables(self):
         """Initialize core application variables"""
         # 9.3 State variables
-        self.FL = None  # Flight level [feet]
-        self.Mach = None  # Mach number
-        self.A_inlet = None  # Inlet area [m²]
+        self.FL = None      # Flight level [feet]
+        self.Mach = None    # Mach number
+        self.A_inlet = None # Inlet area [m²]
         self.selected_data = {'x': None, 'y': None}  # Cursor position storage
 
     def _create_main_frame(self):
@@ -1756,12 +1767,16 @@ class BoundaryLayerIngestion:
         submit_btn.pack(pady=10)
 
     def _create_output_frame(self):
-        """Create output text panel"""
+        """Create output text panel with export option"""
         # 9.7 Output console
         output_frame = tk.LabelFrame(self.io_frame, text="Outputs", padx=10, pady=10)
         output_frame.pack(fill=tk.BOTH, expand=True)
         self.output_text = tk.Text(output_frame, wrap=tk.WORD, width=40, height=30)
         self.output_text.pack(fill=tk.BOTH, expand=True)
+
+        # Export button under the output text panel
+        export_btn = tk.Button(output_frame, text="Export Outputs", command=self.export_outputs)
+        export_btn.pack(pady=5)
 
     def _create_cursor_label(self):
         """Create cursor tracking display"""
@@ -1825,6 +1840,42 @@ class BoundaryLayerIngestion:
 
         canvas.draw()
 
+    # === Export Functionality ===
+    def export_outputs(self):
+        """Export the contents of the outputs window to a folder named based on input parameters."""
+        # Retrieve content from the Text widget
+        output_data = self.output_text.get("1.0", tk.END).strip()
+        if not output_data:
+            messagebox.showwarning("Export Warning", "There is no output to export!")
+            return
+
+        # Ensure the input parameters have been set
+        if self.FL is None or self.Mach is None or self.A_inlet is None:
+            messagebox.showwarning("Export Warning", "Input parameters not found. Please generate outputs first.")
+            return
+
+        # Let the user choose a base directory
+        base_dir = filedialog.askdirectory(title="Select a base directory to save outputs")
+        if not base_dir:
+            return
+
+        # Build the folder name from input parameters, e.g., "FL_10000_Mach_0.85_Ain_3.0"
+        folder_name = f"FL_{self.FL}_Mach_{self.Mach}_Ain_{self.A_inlet}"
+        folder_path = os.path.join(base_dir, folder_name)
+
+        try:
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+
+            # Define the output file path
+            output_file = os.path.join(folder_path, "output.txt")
+            with open(output_file, "w") as f:
+                f.write(output_data)
+
+            messagebox.showinfo("Export Successful", f"Outputs exported successfully to:\n{folder_path}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"An error occurred while exporting outputs:\n{e}")
+
     # === Main Functionality ===
     def visualize(self):
         """Main analysis pipeline"""
@@ -1844,7 +1895,6 @@ class BoundaryLayerIngestion:
 
     def _read_inputs(self):
         """Validate and convert user inputs"""
-        # 9.20 Input processing
         self.FL = float(self.fl_entry.get())
         self.Mach = float(self.mach_entry.get())
         self.A_inlet = float(self.area_entry.get())
@@ -1941,12 +1991,12 @@ class BoundaryLayerIngestion:
         """Coordinate all visualization tasks"""
         # 9.29 Visualization pipeline
         self._plot_engine_geometry(results_nacelle, v_inlet, v_disk, v_exhaust)
-        A_inlet = results_nacelle[0]    
+        A_inlet = results_nacelle[0]
         delta_p = results_nacelle[10]
         p = results_nacelle[-1]
         
         # 9.30 Initialize fuselage flow model
-        self.fuselage = Flow_around_fuselage(v_freestream, self.Mach, rho, mu, delta_p, A_inlet,p)
+        self.fuselage = Flow_around_fuselage(v_freestream, self.Mach, rho, mu, delta_p, A_inlet, p)
         self.fuselage.solve_boundary_layer()
         self.fuselage.run_simulation()
 
