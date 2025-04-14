@@ -319,7 +319,7 @@ class Flow_around_fuselage:
         
         # 6.5 Suction parameters initialization
         # Theory: Base suction strength proportional to capture area
-        self.suction_strength = 0.06 * A_inlet  # Initial suction parameter [m²/s]
+        self.suction_strength = 0.04 * A_inlet  # Initial suction parameter [m²/s]
  
 
         # 6.6 Mass flow ratio calculation
@@ -446,8 +446,7 @@ class Flow_around_fuselage:
         dr2_dx = np.zeros_like(self.x)  # d(r²)/dx array initialization
 
         # 6.23 Apply Prandtl-Glauert compressibility correction - It s not used anymore 
- 
-        
+
         # 6.24 Calculate source distribution along fuselage
         for i, xi in enumerate(self.x):
             if xi <= self.nose_length:
@@ -1036,18 +1035,26 @@ class Flow_around_fuselage:
         cursor = mplcursors.cursor([line_without, line_with], hover=True)
         cursor.connect("add", on_hover)
 
-        # 6.112 Display performance metrics
-        #metrics_text = (
-        #    f"Net Thrust: {self.T_net:.2f} N\n"
-        #    f"Drag Reduction: {self.D_red:.2f} N\n"
-        #    f"PSC: {self.PSC:.1%}"
-        #)
-        #ax.text(
-        #    0.02, 0.90, metrics_text, 
-        #    transform=ax.transAxes,
-        #    fontsize=12, 
-        #    bbox=dict(facecolor='wheat', alpha=0.5)
-        #)
+        # 6.112 Display performance metrics + BL thickness at dashed line
+        idx_at_prop = np.argmin(np.abs(self.results_with_propulsor["x"] - self.propulsor_position))
+        delta_with = self.results_with_propulsor["delta_99"][idx_at_prop]
+        delta_without = self.results_without_propulsor["delta_99"][idx_at_prop]
+
+        metrics_text = (
+            f"Net Thrust: {self.T_net:.2f} N\n"
+            f"Drag Reduction: {self.D_red:.2f} N\n"
+            f"PSC: {self.PSC:.4%}\n\n"
+            f"δ99 at Propulsor Position:\n"
+            f"  • With BLI: {delta_with:.4f} m\n"
+            f"  • Without BLI: {delta_without:.4f} m"
+        )
+        ax.text(
+            0.02, 0.70, metrics_text, 
+            transform=ax.transAxes,
+            fontsize=12, 
+            bbox=dict(facecolor='wheat', alpha=0.5)
+        )
+
 
         # 6.113 Finalize layout
         fig.tight_layout()
