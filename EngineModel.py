@@ -1844,7 +1844,8 @@ class BoundaryLayerIngestion:
                 os.makedirs(folder_path)
 
             # Define the output file path
-            output_file = os.path.join(folder_path, "output.txt")
+            file_name = f"FL_{self.FL}_Mach_{self.Mach}_Ain_{self.A_inlet}.txt"
+            output_file = os.path.join(folder_path, file_name)      
             with open(output_file, "w") as f:
                 f.write(output_data)
 
