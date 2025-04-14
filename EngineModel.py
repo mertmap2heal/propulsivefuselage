@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import ttk
 import numpy as np
@@ -11,7 +12,7 @@ from scipy.integrate import solve_ivp
 import mplcursors
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 import matplotlib.colors as mcolors  
-
+from tkinter import messagebox, filedialog
 
 #---------------------------------------# 
 # Section 1 - Flight Conditions #
@@ -286,7 +287,7 @@ class EngineMassEstimation:
 # Section 6 - Fuselage Flow Analysis (Continued) #
 #---------------------------------------# 
 class Flow_around_fuselage:
-    def __init__(self, v_freestream, Mach, rho, mu, delta_p, A_inlet, p,
+    def __init__(self, flight_conditions, nacelle_params, FL, v_freestream, Mach, rho, mu, delta_p, A_inlet, p,
                 propulsor_position=33.0, nacelle_length=None,  
                 eta_disk=None, eta_motor=None, eta_prop=None):
         # 6.1 Initialize core flow parameters
@@ -299,6 +300,11 @@ class Flow_around_fuselage:
         self.ηdisk = eta_disk or _EFFICIENCY_DEFAULTS["eta_disk"]  # Disk efficiency
         self.ηmotor = eta_motor or _EFFICIENCY_DEFAULTS["eta_motor"]  # Motor efficiency
         self.ηprop = eta_prop or _EFFICIENCY_DEFAULTS["eta_prop"]  # Propeller efficiency
+        self.flight_conditions = flight_conditions
+        self.nacelle_params = nacelle_params
+        self.drag_bli_engine = DragbyBLIEngine(flight_conditions, nacelle_params, FL, Mach)
+
+
         
         # 6.3 Calculate BLI parameters
         # Theory: Empirical scaling for maximum boundary layer thickness (Kaiser et al.)
@@ -323,8 +329,7 @@ class Flow_around_fuselage:
         self.suction_width = 3.0 * disk_diameter  # Upstream influence region [m]
         self.recovery_width = 0.00001 * disk_diameter  # Downstream recovery zone [m]
 
- 
-
+  
 
         # 6.8 Initialize remaining parameters
         self.nacelle_length = nacelle_length  # Nacelle length [m]
@@ -1302,63 +1307,40 @@ class Flow_around_fuselage:
             self.results_with_propulsor["theta"] * 2 * np.pi * self.R,
             self.x
         )
-
-        # 6.158 Calculate nacelle installation drag
-        C_d_nacelle = 0.008  # Form drag coefficient for nacelle
-     
+ 
         # Compute Reynolds number for nacelle
         Re = self.rho * self.free_stream_velocity * self.nacelle.nac_length / self.mu
 
-        # Skin friction coefficient depending on flow regime
-        if Re < 5e5:
-            C_f = 1.328 / np.sqrt(Re + 1e-8)  # Blasius for laminar flow
-        else:
-            compressibility_correction = (1 + 0.144 * self.Mach**2) ** -0.65
-            C_f = (0.455 / (np.log10(Re)**2.58)) * compressibility_correction  # Schlichting
-
-        # 6.160 Compute total nacelle drag components
-        nacelle_drag = 0.5 * self.rho * self.free_stream_velocity**2 * (
-            self.nacelle.A_inlet * C_d_nacelle +  # Form drag
-            2 * np.pi * self.disk_radius * self.nacelle.nac_length * C_f  # Skin friction
-        )
+        Dzero, Cdzero, mu = self.drag_bli_engine.calculate_zero_lift_drag()
+        nacelle_drag = Dzero  # Replace existing nacelle_drag calculation
 
         return D_NoBLI - D_BLI - nacelle_drag
 
     def compute_PSC(self):  
         """
         Calculate Power Saving Coefficient (PSC)
-        Theory: PSC = (D_baseline - D_BLI - D_nacelle)/D_baseline
-                Represents net propulsive efficiency gain
         """
         Vinf = self.free_stream_velocity
-        
-        # 6.161 Calculate baseline drag
+
+        # Calculate baseline and BLI-affected drag (existing code)
         D_NoBLI = np.trapz(
             self.rho * Vinf**2 * 
             self.results_without_propulsor["theta"] * 2 * np.pi * self.R,
             self.x
         )
-        
-        # 6.162 Calculate BLI-affected drag
         D_BLI = np.trapz(
             self.rho * Vinf**2 * 
             self.results_with_propulsor["theta"] * 2 * np.pi * self.R,
             self.x
         )
 
-        # 6.163 Calculate nacelle drag components
-        C_d_nacelle = 0.008  # Nacelle form drag coefficient
-        Re = self.rho * Vinf * self.nacelle.nac_length / self.mu
-        C_f = 0.455 / (np.log(0.06*Re))**2  # Turbulent skin friction
-        
-        # 6.164 Compute installation drag
-        nacelle_drag = 0.5 * self.rho * Vinf**2 * (
-            self.nacelle.A_inlet * C_d_nacelle + 
-            2 * np.pi * self.disk_radius * self.nacelle.nac_length * C_f
-        )
+        # Get Dzero from DragbyBLIEngine
+        Dzero, Cdzero, mu = self.drag_bli_engine.calculate_zero_lift_drag()
+        nacelle_drag = Dzero  # Replace existing nacelle_drag calculation
 
-        # 6.165 Calculate PSC with numerical safety
+        # Calculate PSC
         return (D_NoBLI - D_BLI - nacelle_drag) / (D_NoBLI + 1e-9)
+    
 #---------------------------------------# 
 # Section 7 - Actuator Disk Model #
 #---------------------------------------# 
@@ -1683,16 +1665,9 @@ class EngineVisualization:
 # Section 9 - GUI Application #
 #---------------------------------------# 
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import os
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-import mplcursors
+ 
 
-# NOTE: The following classes (FlightConditions, NacelleParameters, ActuatorDiskModel,
-# DragbyBLIEngine, EngineMassEstimation, EngineVisualization, Flow_around_fuselage)
-# should be defined elsewhere in your project.
-
+ 
 class BoundaryLayerIngestion:
     """
     Main GUI application for Boundary Layer Ingestion analysis
@@ -1904,6 +1879,7 @@ class BoundaryLayerIngestion:
         """Process atmospheric and flow properties"""
         # 9.21 Flight condition analysis
         flight_conditions = FlightConditions()
+        self.flight_conditions = flight_conditions
         T, p, rho = flight_conditions.calculate_atmospheric_properties(self.FL)
         v_inlet, v_freestream = flight_conditions.calculate_free_stream_velocity(self.Mach, self.FL)
 
@@ -1996,7 +1972,19 @@ class BoundaryLayerIngestion:
         p = results_nacelle[-1]
         
         # 9.30 Initialize fuselage flow model
-        self.fuselage = Flow_around_fuselage(v_freestream, self.Mach, rho, mu, delta_p, A_inlet, p)
+        self.fuselage = Flow_around_fuselage(
+            self.flight_conditions,   
+            self.nacelle,              
+            self.FL,                   
+            v_freestream,
+            self.Mach,
+            rho,
+            mu,
+            delta_p,
+            A_inlet,
+            p
+        )
+
         self.fuselage.solve_boundary_layer()
         self.fuselage.run_simulation()
 
