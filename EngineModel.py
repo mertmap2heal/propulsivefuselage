@@ -1857,7 +1857,7 @@ class BoundaryLayerIngestion:
         if not base_dir:
             return
 
-        # Build the folder name from input parameters, e.g., "FL_10000_Mach_0.85_Ain_3.0"
+        # Build the folder name from input parameters
         folder_name = f"FL_{self.FL}_Mach_{self.Mach}_Ain_{self.A_inlet}"
         folder_path = os.path.join(base_dir, folder_name)
 
@@ -1867,8 +1867,10 @@ class BoundaryLayerIngestion:
 
             # Define the output file path
             file_name = f"FL_{self.FL}_Mach_{self.Mach}_Ain_{self.A_inlet}.txt"
-            output_file = os.path.join(folder_path, file_name)      
-            with open(output_file, "w") as f:
+            output_file = os.path.join(folder_path, file_name)
+
+            # <-- Specify UTF-8 here to avoid Windows charmap errors -->
+            with open(output_file, "w", encoding="utf-8") as f:
                 f.write(output_data)
 
             messagebox.showinfo("Export Successful", f"Outputs exported successfully to:\n{folder_path}")
