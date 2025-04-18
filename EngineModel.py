@@ -291,10 +291,12 @@ class EngineMassEstimation:
 #---------------------------------------# 
 # Section 6 - Fuselage Flow Analysis (Continued) #
 #---------------------------------------# 
+ 
 class Flow_around_fuselage:
     def __init__(self, flight_conditions, nacelle_params, FL, v_freestream, Mach, rho, mu, delta_p, A_inlet, p,
-                propulsor_position=34.0, nacelle_length=None,  
-                eta_disk=None, eta_motor=None, eta_prop=None):
+                 propulsor_position=34.0, nacelle_length=None,  
+                 eta_disk=None, eta_motor=None, eta_prop=None,
+                 output_text=None):
         # 6.1 Initialize core flow parameters
         self.A_inlet = A_inlet  # Propulsor capture area [m²]
         self.fuselage_length = 38  # Total fuselage length [m]
@@ -309,8 +311,6 @@ class Flow_around_fuselage:
         self.nacelle_params = nacelle_params
         self.drag_bli_engine = DragbyBLIEngine(flight_conditions, nacelle_params, FL, Mach)
 
-
-        
         # 6.3 Calculate BLI parameters
         # Theory: Empirical scaling for maximum boundary layer thickness (Kaiser et al.)
         self.delta_99_max = 0.18 * self.fuselage_length * (A_inlet/12.0)**0.25
@@ -325,18 +325,15 @@ class Flow_around_fuselage:
         # 6.5 Suction parameters initialization
         # Theory: Base suction strength proportional to capture area
         self.suction_strength = 0.04 * A_inlet  # Initial suction parameter [m²/s]
- 
 
         # 6.6 Mass flow ratio calculation
       
-
         # 6.7 Define influence regions
         # Theory: Empirical scaling for suction/recovery zone widths
         self.suction_width = 3.0 * disk_diameter  # Upstream influence region [m]
         self.recovery_width = 0.00001 * disk_diameter  # Downstream recovery zone [m]
 
-  
-
+      
         # 6.8 Initialize remaining parameters
         self.nacelle_length = nacelle_length  # Nacelle length [m]
         self.delta_p = delta_p  # Pressure difference [Pa]
@@ -443,8 +440,12 @@ class Flow_around_fuselage:
 
         # 6.21 Initialize result storage
         self.results_with_propulsor = None
-        self.results_without_propulsor = None 
+        self.results_without_propulsor = None
 
+        # Reference to the GUI output Text widget for exportable metrics
+        self.output_text = output_text
+
+ 
     def source_strength_thin_body(self):
         """Calculate source strength distribution for thin body approximation."""
         # 6.22 Initialize derivative array
@@ -1053,13 +1054,21 @@ class Flow_around_fuselage:
             f"  • With BLI: {delta_with:.4f} m\n"
             f"  • Without BLI: {delta_without:.4f} m"
         )
+
+        # Write metrics into GUI text widget for export
+        if self.output_text:
+            import tkinter as tk
+            self.output_text.insert(tk.END, "Chapter 6: Boundary Layer Analysis\n")
+            self.output_text.insert(tk.END, metrics_text + "\n")
+            self.output_text.insert(tk.END, "--------------------------------------\n")
+
+        # 6.112b Draw metrics on the plot
         ax.text(
             0.02, 0.70, metrics_text, 
             transform=ax.transAxes,
             fontsize=12, 
             bbox=dict(facecolor='wheat', alpha=0.5)
         )
-
 
         # 6.113 Finalize layout
         fig.tight_layout()
@@ -1069,6 +1078,7 @@ class Flow_around_fuselage:
         canvas.draw()
         NavigationToolbar2Tk(canvas, canvas_frame).pack(side=tk.TOP, fill=tk.X)
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
 
   
     def get_local_velocity_at_propulsor(self):
@@ -1978,36 +1988,50 @@ class BoundaryLayerIngestion:
         return total_motor_mass
 
     # === Plotting Methods ===       
-    def _plot_visualizations(self, results_nacelle, v_inlet, v_disk, v_exhaust, v_freestream, rho, mu):
-        """Coordinate all visualization tasks"""
-        # 9.29 Visualization pipeline
+    def _plot_visualizations(
+        self,
+        results_nacelle,
+        v_inlet,
+        v_disk,
+        v_exhaust,
+        v_freestream,
+        rho,
+        mu
+    ):
+        """Coordinate and execute all visualization tasks"""
+        # 9.29 Visualization pipeline: engine geometry
         self._plot_engine_geometry(results_nacelle, v_inlet, v_disk, v_exhaust)
+
+        # Extract parameters for fuselage model
         A_inlet = results_nacelle[0]
         delta_p = results_nacelle[10]
-        p = results_nacelle[-1]
-        
-        # 9.30 Initialize fuselage flow model
+        p_disk  = results_nacelle[-1]
+
+        # 9.30 Initialize fuselage flow model with GUI output support
         self.fuselage = Flow_around_fuselage(
-            self.flight_conditions,   
-            self.nacelle,              
-            self.FL,                   
+            self.flight_conditions,
+            self.nacelle,
+            self.FL,
             v_freestream,
             self.Mach,
             rho,
             mu,
             delta_p,
             A_inlet,
-            p
+            p_disk,
+            output_text=self.output_text
         )
 
+        # 9.31 Solve boundary layer and run flow simulation
         self.fuselage.solve_boundary_layer()
         self.fuselage.run_simulation()
 
-        # 9.31 Generate aerodynamic visualizations
+        # 9.32 Generate aerodynamic visualizations for all tabs
         self._plot_source_field()
         self._plot_velocity_field()
         self._plot_pressure_distribution()
         self._plot_boundary_layer_thickness()
+
 
     def _plot_engine_geometry(self, results_nacelle, v_inlet, v_disk, v_exhaust):
         """Visualize nacelle geometry"""
