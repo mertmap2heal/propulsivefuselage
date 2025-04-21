@@ -240,15 +240,7 @@ class DragbyBLIEngine:
 # Section 5 - Engine Mass Estimation #
 #---------------------------------------# 
 class EngineMassEstimation:
-    """
-    Estimates propulsion system mass using empirical relationships
-    Theory: NASA-derived scaling laws for electric propulsion systems considering:
-            - Motor power density
-            - Disk loading effects
-            - Structural scaling
-            - Cooling requirements
-    """
-    
+ 
     def __init__(self, actuator_disk):
         # 5.1 Initialize with actuator disk model reference
         self.disk = actuator_disk  # Reference to ActuatorDiskModel instance
@@ -257,35 +249,32 @@ class EngineMassEstimation:
     def _calculate_derived_params(self):
         """Calculate key performance parameters for mass estimation"""
         # 5.2 Extract core performance parameters
-        self.power_total = self.disk.calculate_total_power()  # Total electrical power [kW]
-        self.A_eff = self.disk.A_effective  # Effective actuator disk area [m²]
-        self.m_dot = self.disk.calculate_mass_flow_rate()  # Mass flow rate [kg/s]
+        self.power_total = 0
+        self.A_eff = 0
+        self.m_dot = 0
 
         # 5.3 Calculate propulsion system loadings
         # Theory: Key metrics for component mass scaling
-        self.disk_loading = (self.disk.calculate_thrust() / self.A_eff)  # Thrust/area [N/m²]
-        self.power_loading = (self.disk.calculate_thrust() * 1e-3) / self.power_total  # Thrust/power [kN/kW]
+        self.disk_loading = 0
+        self.power_loading = 0
 
     def calculate_total_motor_mass(self):
         """Calculate total propulsion system mass with contingency"""
         # 5.4 Electric motor mass correlation
-        # Theory: NASA N3-X scaling: mass ~ power^0.72
-        motor_mass = 1.8 * self.power_total**0.72  # [kg]
+        
+        motor_mass = 0
         
         # 5.5 Rotor/propeller mass estimation
         # Theory: Composite blade scaling with disk loading
-        rotor_mass = 0.15 * self.A_eff * (self.disk_loading/1000)**0.6  # [kg]
-        
+        rotor_mass = 0
         # 5.6 Structural mass components
         # Theory: Nacelle scaling with area + motor support structure
-        struct_mass = 4.2 * (self.A_eff**0.65) + 0.12 * motor_mass  # [kg]
-        
+        struct_mass = 0
         # 5.7 Cooling system requirements
         # Theory: Liquid cooling needed above 200kW threshold
-        cooling_mass = 0.07 * self.power_total if self.power_total > 200 else 0  # [kg]
-        
+        cooling_mass = 0
         # 5.8 Total mass with design contingency
-        # Theory: 12% margin for brackets, connectors, and unaccounted components
+         
         return (motor_mass + rotor_mass + struct_mass + cooling_mass) * 1.12  # [kg]
     
 #---------------------------------------# 
